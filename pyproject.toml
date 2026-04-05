@@ -30,6 +30,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+pdf = [
+    "docx2pdf>=0.1.8",
+]
 dev = [
     "pytest>=7.0",
 ]
