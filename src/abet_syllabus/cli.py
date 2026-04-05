@@ -474,12 +474,15 @@ def cmd_map(args: argparse.Namespace) -> int:
         review_mappings,
     )
 
+    from abet_syllabus.mapping.engine import get_default_provider
+
     db_path = args.db
     program = args.program
     force = getattr(args, "force", False)
     do_review = getattr(args, "review", False)
     do_approve = getattr(args, "approve", False)
     map_all = getattr(args, "map_all", False)
+    provider_name = getattr(args, "provider", None)
 
     # --- Review mode ---
     if do_review and not map_all:
@@ -527,7 +530,8 @@ def cmd_map(args: argparse.Namespace) -> int:
     # --- Map all courses in a program ---
     if map_all:
         try:
-            all_results = map_program(db_path, program, force=force)
+            provider = get_default_provider(provider_name)
+            all_results = map_program(db_path, program, provider=provider, force=force)
         except ValueError as exc:
             logger.error("Mapping failed: %s", exc)
             return 1
@@ -558,7 +562,8 @@ def cmd_map(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        results = map_course(db_path, course_code, program, force=force)
+        provider = get_default_provider(provider_name)
+        results = map_course(db_path, course_code, program, provider=provider, force=force)
     except ValueError as exc:
         logger.error("Mapping failed: %s", exc)
         return 1
@@ -1081,6 +1086,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument(
         "--force", action="store_true",
         help="Re-map even if mappings already exist",
+    )
+    p_map.add_argument(
+        "--provider", default=None, choices=["anthropic", "openrouter"],
+        help="AI provider (default: auto-detect from API keys)",
     )
     p_map.set_defaults(func=cmd_map)
 

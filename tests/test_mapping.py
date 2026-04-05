@@ -506,8 +506,9 @@ class TestGetDefaultProvider:
             # Ensure ANTHROPIC_API_KEY is not set
             env = os.environ.copy()
             env.pop("ANTHROPIC_API_KEY", None)
+            env.pop("OPENROUTER_API_KEY", None)
             with patch.dict(os.environ, env, clear=True):
-                with pytest.raises(ValueError, match="API key required"):
+                with pytest.raises(ValueError, match="No API key found"):
                     get_default_provider()
 
     def test_returns_anthropic_provider(self):

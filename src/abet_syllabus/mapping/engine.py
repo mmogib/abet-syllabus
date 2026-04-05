@@ -20,20 +20,46 @@ from .provider import MappingProvider, MappingResult
 logger = logging.getLogger(__name__)
 
 
-def get_default_provider() -> MappingProvider:
-    """Get the default mapping provider (Anthropic/Claude).
+def get_default_provider(provider_name: str | None = None) -> MappingProvider:
+    """Get a mapping provider by name, or auto-detect from available API keys.
 
-    Reads the API key from the ``ANTHROPIC_API_KEY`` environment variable.
+    Provider resolution order when *provider_name* is ``None``:
+    1. If ``OPENROUTER_API_KEY`` is set → OpenRouterProvider
+    2. If ``ANTHROPIC_API_KEY`` is set → AnthropicProvider
+    3. Raise ValueError
+
+    Args:
+        provider_name: ``"anthropic"``, ``"openrouter"``, or ``None`` for auto.
 
     Returns:
-        An initialized AnthropicProvider.
+        An initialized MappingProvider.
 
     Raises:
-        ValueError: If the ANTHROPIC_API_KEY env var is not set.
+        ValueError: If no API key is available for the requested provider.
     """
-    from .anthropic_provider import AnthropicProvider
+    import os
 
-    return AnthropicProvider()
+    if provider_name == "anthropic":
+        from .anthropic_provider import AnthropicProvider
+        return AnthropicProvider()
+
+    if provider_name == "openrouter":
+        from .openrouter_provider import OpenRouterProvider
+        return OpenRouterProvider()
+
+    # Auto-detect
+    if os.environ.get("OPENROUTER_API_KEY"):
+        from .openrouter_provider import OpenRouterProvider
+        return OpenRouterProvider()
+
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        from .anthropic_provider import AnthropicProvider
+        return AnthropicProvider()
+
+    raise ValueError(
+        "No API key found. Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY "
+        "environment variable."
+    )
 
 
 def _clos_to_dicts(clos: list) -> list[dict]:
