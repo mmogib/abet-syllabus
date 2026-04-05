@@ -408,6 +408,122 @@ def upsert_source_file(
 
 
 # ---------------------------------------------------------------------------
+# Query helpers for topics, textbooks, assessments
+# ---------------------------------------------------------------------------
+
+def get_course_topics(conn: sqlite3.Connection, course_id: int) -> list[CourseTopic]:
+    rows = conn.execute(
+        "SELECT * FROM course_topics WHERE course_id = ? ORDER BY sequence",
+        (course_id,),
+    ).fetchall()
+    return [
+        CourseTopic(
+            id=r["id"], course_id=r["course_id"], topic_number=r["topic_number"],
+            topic_title=r["topic_title"], contact_hours=r["contact_hours"],
+            topic_type=r["topic_type"], sequence=r["sequence"],
+        )
+        for r in rows
+    ]
+
+
+def get_course_textbooks(conn: sqlite3.Connection, course_id: int) -> list[CourseTextbook]:
+    rows = conn.execute(
+        "SELECT * FROM course_textbooks WHERE course_id = ? ORDER BY sequence",
+        (course_id,),
+    ).fetchall()
+    return [
+        CourseTextbook(
+            id=r["id"], course_id=r["course_id"],
+            textbook_text=r["textbook_text"],
+            textbook_type=r["textbook_type"], sequence=r["sequence"],
+        )
+        for r in rows
+    ]
+
+
+def get_course_assessments(conn: sqlite3.Connection, course_id: int) -> list[CourseAssessment]:
+    rows = conn.execute(
+        "SELECT * FROM course_assessment WHERE course_id = ? ORDER BY sequence",
+        (course_id,),
+    ).fetchall()
+    return [
+        CourseAssessment(
+            id=r["id"], course_id=r["course_id"],
+            assessment_task=r["assessment_task"],
+            week_due=r["week_due"], proportion=r["proportion"],
+            assessment_type=r["assessment_type"], sequence=r["sequence"],
+        )
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Source file deduplication
+# ---------------------------------------------------------------------------
+
+def get_source_file_by_hash(conn: sqlite3.Connection, content_hash: str) -> dict | None:
+    """Return source file record by content hash, or None if not found."""
+    row = conn.execute(
+        "SELECT * FROM source_files WHERE file_hash = ?", (content_hash,)
+    ).fetchone()
+    if row is None:
+        return None
+    return dict(row)
+
+
+# ---------------------------------------------------------------------------
+# Processing runs
+# ---------------------------------------------------------------------------
+
+def create_processing_run(
+    conn: sqlite3.Connection, *,
+    input_path: str, program_code: str = "",
+    total_files: int = 0,
+) -> int:
+    """Create a new processing run record. Returns the run ID."""
+    cur = conn.execute(
+        """INSERT INTO processing_runs (input_path, program_code, total_files)
+           VALUES (?, ?, ?)""",
+        (input_path, program_code, total_files),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+def update_processing_run(
+    conn: sqlite3.Connection, run_id: int, *,
+    success_count: int = 0, error_count: int = 0,
+    notes: str = "",
+) -> None:
+    """Update a processing run with final counts and completion time."""
+    conn.execute(
+        """UPDATE processing_runs
+           SET completed_at = datetime('now'),
+               success_count = ?,
+               error_count = ?,
+               notes = ?
+           WHERE id = ?""",
+        (success_count, error_count, notes, run_id),
+    )
+    conn.commit()
+
+
+def add_run_file(
+    conn: sqlite3.Connection, *,
+    run_id: int, source_file_id: int,
+    status: str = "success", error_message: str = "",
+) -> int:
+    """Record a per-file result within a processing run."""
+    cur = conn.execute(
+        """INSERT INTO run_files (run_id, source_file_id, status, error_message)
+           VALUES (?, ?, ?, ?)""",
+        (run_id, source_file_id, status, error_message),
+    )
+    conn.commit()
+    return cur.lastrowid
+
+
+# ---------------------------------------------------------------------------
 # Statistics
 # ---------------------------------------------------------------------------
 
@@ -416,6 +532,10 @@ def get_stats(conn: sqlite3.Connection) -> dict:
     stats = {}
     for table in ["programs", "courses", "course_clos", "plo_definitions",
                    "clo_plo_mappings", "source_files", "course_topics"]:
+        row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()  # noqa: S608
+        stats[table] = row["c"]
+    # Also include textbooks and assessments
+    for table in ["course_textbooks", "course_assessment"]:
         row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()  # noqa: S608
         stats[table] = row["c"]
     return stats

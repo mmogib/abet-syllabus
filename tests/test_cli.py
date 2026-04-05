@@ -21,14 +21,16 @@ def test_version(capsys):
     assert exc_info.value.code == 0
 
 
-def test_ingest_placeholder():
+def test_ingest_nonexistent_file():
+    """Ingest with a nonexistent file should return error (1)."""
     result = main(["ingest", "somefile.docx"])
-    assert result == 0
+    assert result == 1
 
 
-def test_query_courses_placeholder():
+def test_query_courses_no_db():
+    """Query without a database should return error (1)."""
     result = main(["query", "courses"])
-    assert result == 0
+    assert result == 1
 
 
 def test_map_placeholder():
