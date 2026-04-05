@@ -212,6 +212,8 @@ def _dispatch_query(conn, args: argparse.Namespace) -> int:
         return _query_clos(conn, args)
     elif qcmd == "stats":
         return _query_stats(conn)
+    elif qcmd == "plo-matrix":
+        return _query_plo_matrix(conn, args)
     else:
         print(f"Unknown query command: {qcmd}", file=sys.stderr)
         return 1
@@ -380,10 +382,172 @@ def _query_stats(conn) -> int:
     return 0
 
 
+def _query_plo_matrix(conn, args: argparse.Namespace) -> int:
+    """Show CLO-PLO mapping matrix for a program."""
+    from abet_syllabus.mapping.engine import export_plo_matrix
+
+    program = getattr(args, "program", None)
+    if not program:
+        print("Error: --program / -p is required for plo-matrix", file=sys.stderr)
+        return 1
+
+    # We need db_path for the engine function; reconstruct from conn
+    # Actually, export_plo_matrix needs db_path, but we already have conn.
+    # Re-implement using conn directly to avoid opening a second connection.
+    from abet_syllabus.db import repository as repo
+
+    courses = repo.get_all_courses(conn, program_code=program)
+    if not courses:
+        print(f"No courses found for program {program}.")
+        return 0
+
+    has_mappings = False
+    for course in courses:
+        mappings = repo.get_mappings_for_course(conn, course.id, program)
+        if not mappings:
+            continue
+
+        has_mappings = True
+        # Group by CLO
+        clo_groups: dict[str, list[str]] = {}
+        for m in mappings:
+            clo_code = m["clo_code"]
+            plo_label = m["plo_label"]
+            if clo_code not in clo_groups:
+                clo_groups[clo_code] = []
+            if plo_label not in clo_groups[clo_code]:
+                clo_groups[clo_code].append(plo_label)
+
+        print(f"{course.course_code} - {course.course_title}:")
+        for clo_code, plo_labels in clo_groups.items():
+            plos_str = ", ".join(plo_labels)
+            print(f"  {clo_code:<8} -> {plos_str}")
+        print()
+
+    if not has_mappings:
+        print(f"No CLO-PLO mappings found for program {program}.")
+        print("Run 'abet-syllabus map --all -p <program>' to generate mappings.")
+
+    return 0
+
+
 def cmd_map(args: argparse.Namespace) -> int:
-    """Run CLO-PLO mapping for a course."""
-    print(f"[map] course={args.course}, program={args.program}")
-    print("Not yet implemented (Stage 6).")
+    """Run CLO-PLO mapping for a course or program."""
+    from abet_syllabus.mapping import (
+        approve_mappings,
+        map_course,
+        map_program,
+        review_mappings,
+    )
+
+    db_path = args.db
+    program = args.program
+    force = getattr(args, "force", False)
+    do_review = getattr(args, "review", False)
+    do_approve = getattr(args, "approve", False)
+    map_all = getattr(args, "map_all", False)
+
+    # --- Review mode ---
+    if do_review and not map_all:
+        course_code = args.course
+        if not course_code:
+            print("Error: course code required for --review", file=sys.stderr)
+            return 1
+        mappings = review_mappings(db_path, course_code, program)
+        if not mappings:
+            print(f"No mappings found for {course_code} in {program}.")
+            return 0
+
+        print(f"Mappings for {course_code} in {program}:")
+        print(f"{'CLO':<8} {'PLO':<8} {'Source':<15} {'Conf':>5} {'Appr':>5}  Rationale")
+        print("-" * 90)
+        for m in mappings:
+            approved = "Yes" if m.get("approved") else "No"
+            conf = f"{m.get('confidence', 0):.2f}"
+            rationale = m.get("rationale", "")
+            if len(rationale) > 40:
+                rationale = rationale[:40] + "..."
+            print(
+                f"{m.get('clo_code', '?'):<8} "
+                f"{m.get('plo_label', '?'):<8} "
+                f"{m.get('mapping_source', '?'):<15} "
+                f"{conf:>5} "
+                f"{approved:>5}  "
+                f"{rationale}"
+            )
+        return 0
+
+    # --- Approve mode ---
+    if do_approve and not map_all:
+        course_code = args.course
+        if not course_code:
+            print("Error: course code required for --approve", file=sys.stderr)
+            return 1
+        count = approve_mappings(db_path, course_code, program)
+        if count > 0:
+            print(f"Approved {count} mapping(s) for {course_code} in {program}.")
+        else:
+            print(f"No pending AI-suggested mappings to approve for {course_code} in {program}.")
+        return 0
+
+    # --- Map all courses in a program ---
+    if map_all:
+        try:
+            all_results = map_program(db_path, program, force=force)
+        except ValueError as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+        except RuntimeError as exc:
+            print(f"API Error: {exc}", file=sys.stderr)
+            return 1
+
+        if not all_results:
+            print(f"No courses found for program {program}.")
+            return 0
+
+        total = 0
+        for course_code, results in all_results.items():
+            count = len(results)
+            total += count
+            if count > 0:
+                print(f"  {course_code}: {count} mapping(s) suggested")
+            else:
+                print(f"  {course_code}: already mapped (skipped)")
+
+        print(f"\nTotal: {total} mapping(s) suggested for {program}.")
+        return 0
+
+    # --- Map a single course ---
+    course_code = args.course
+    if not course_code:
+        print("Error: course code required (or use --all)", file=sys.stderr)
+        return 1
+
+    try:
+        results = map_course(db_path, course_code, program, force=force)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 1
+    except RuntimeError as exc:
+        print(f"API Error: {exc}", file=sys.stderr)
+        return 1
+
+    if not results:
+        print(f"All CLOs already mapped for {course_code} in {program}.")
+        return 0
+
+    print(f"Mapping results for {course_code} in {program}:")
+    print(f"{'CLO':<8} {'PLO':<8} {'Conf':>5}  Rationale")
+    print("-" * 70)
+    for r in results:
+        rationale = r.rationale
+        if len(rationale) > 45:
+            rationale = rationale[:45] + "..."
+        print(f"{r.clo_code:<8} {r.plo_code:<8} {r.confidence:>5.2f}  {rationale}")
+
+    print(f"\nTotal: {len(results)} mapping(s) suggested.")
+    print(f"Use 'abet-syllabus map \"{course_code}\" -p {program} --review' to review.")
+    print(f"Use 'abet-syllabus map \"{course_code}\" -p {program} --approve' to approve.")
     return 0
 
 
@@ -485,12 +649,20 @@ def build_parser() -> argparse.ArgumentParser:
     q_stats = query_sub.add_parser("stats", help="Show database statistics")
     q_stats.set_defaults(func=cmd_query)
 
+    q_plo_matrix = query_sub.add_parser("plo-matrix", help="Show CLO-PLO mapping matrix")
+    q_plo_matrix.add_argument("--program", "-p", required=True, help="Program code")
+    q_plo_matrix.set_defaults(func=cmd_query)
+
     # --- map ---
     p_map = subparsers.add_parser("map", help="Run CLO-PLO mapping for a course")
-    p_map.add_argument("course", help="Course code (e.g., MATH 101)")
+    p_map.add_argument("course", nargs="?", default=None, help="Course code (e.g., 'MATH 101')")
     p_map.add_argument(
         "--program", "-p", required=True,
         help="Program code (e.g., MATH)",
+    )
+    p_map.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
     )
     p_map.add_argument(
         "--review", action="store_true",
@@ -503,6 +675,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument(
         "--all", dest="map_all", action="store_true",
         help="Map all unmapped courses in the program",
+    )
+    p_map.add_argument(
+        "--force", action="store_true",
+        help="Re-map even if mappings already exist",
     )
     p_map.set_defaults(func=cmd_map)
 

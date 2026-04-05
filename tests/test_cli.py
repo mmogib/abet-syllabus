@@ -27,15 +27,18 @@ def test_ingest_nonexistent_file():
     assert result == 1
 
 
-def test_query_courses_no_db():
-    """Query without a database should return error (1)."""
-    result = main(["query", "courses"])
+def test_query_courses_no_db(tmp_path):
+    """Query without a real database should return error (1)."""
+    # Use a non-existent path that init_db won't auto-create
+    result = main(["query", "--db", str(tmp_path / "noexist" / "nope.db"), "courses"])
     assert result == 1
 
 
-def test_map_placeholder():
-    result = main(["map", "MATH101", "--program", "MATH"])
-    assert result == 0
+def test_map_missing_course(tmp_path):
+    """Map with a nonexistent course should return error (1)."""
+    db = str(tmp_path / "test.db")
+    result = main(["map", "MATH101", "--program", "MATH", "--db", db])
+    assert result == 1
 
 
 def test_generate_placeholder():
