@@ -37,11 +37,16 @@ abet-syllabus/
   src/
     abet_syllabus/            # Python package (importable as abet_syllabus)
       cli.py                  # CLI entry point (argparse)
+      config.py               # YAML config file support
+      logging_config.py       # logging setup (console + file)
+      validate.py             # data quality validation
       extract/                # PDF + DOCX text/table extraction
       parse/                  # structured field extraction from raw text
       db/                     # SQLite schema + persistence
       mapping/                # AI-powered CLO-PLO mapping
       generate/               # DOCX + PDF output generation
+      export/                 # CSV/JSON data export
+      ingest/                 # ingestion pipeline (extract → parse → store)
   tests/                      # pytest test suite
   pyproject.toml              # package metadata, dependencies, entry_points
   notes/                      # project discussion and decision notes
@@ -49,6 +54,24 @@ abet-syllabus/
 ```
 
 CLI entry point: `abet-syllabus` (installed via `pip install -e .`)
+
+## CLI Commands
+
+```
+abet-syllabus run <path> -p <prog> -t <term> -o <dir>  # full pipeline: ingest → generate
+abet-syllabus extract <path>                             # raw text/table extraction
+abet-syllabus parse <path>                               # structured parsing
+abet-syllabus ingest <path> [-p <prog>] [-r]             # extract → parse → store in DB
+abet-syllabus ingest-plos <csv>                           # load PLO definitions
+abet-syllabus query courses|course|clos|stats|plo-matrix  # inspect the database
+abet-syllabus map <course> -p <prog>                      # AI CLO-PLO mapping
+abet-syllabus generate <course> -t <term> [--no-pdf]      # produce DOCX/PDF output
+abet-syllabus export courses|clos|plo-matrix --format csv|json
+abet-syllabus status                                      # database overview
+abet-syllabus validate                                    # data quality check
+```
+
+Global flags: `--db`, `--verbose`/`-v`, `--quiet`/`-q`, `--config`
 
 ## Domain Concepts
 

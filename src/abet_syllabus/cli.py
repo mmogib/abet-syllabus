@@ -653,6 +653,103 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 1 if errors and not success else 0
 
 
+def cmd_run(args: argparse.Namespace) -> int:
+    """Run the full pipeline: ingest files then generate syllabi."""
+    from abet_syllabus.ingest import ingest_file
+    from abet_syllabus.generate import generate_syllabus
+
+    path = Path(args.path)
+    db_path = args.db
+    program = args.program
+    term = args.term
+    output_dir = args.output
+    template = getattr(args, "template", None)
+    no_pdf = getattr(args, "no_pdf", False)
+    gen_pdf = not no_pdf
+    instructor = getattr(args, "instructor", None)
+
+    if not path.exists():
+        logger.error("Path not found: %s", path)
+        return 1
+
+    # --- Step 1: Ingest ---
+    print("=== Step 1: Ingesting course files ===\n")
+
+    if path.is_file():
+        print(f"[1/1] {path.name}... ", end="", flush=True)
+        result = ingest_file(path, db_path, program=program)
+        print(result.status)
+        ingest_results = [result]
+    elif path.is_dir():
+        ingest_results = _ingest_folder_with_progress(
+            path, db_path, program=program, recursive=args.recursive
+        )
+    else:
+        logger.error("Not a file or directory: %s", path)
+        return 1
+
+    if not ingest_results:
+        print("No supported files found.")
+        return 0
+
+    # Collect course codes from successful + skipped ingestions
+    course_codes = []
+    for r in ingest_results:
+        if r.status in ("success", "skipped") and r.course_code:
+            if r.course_code not in course_codes:
+                course_codes.append(r.course_code)
+
+    success_count = sum(1 for r in ingest_results if r.status == "success")
+    skipped_count = sum(1 for r in ingest_results if r.status == "skipped")
+    error_count = sum(1 for r in ingest_results if r.status == "error")
+
+    print(f"\nIngested: {success_count} success, {skipped_count} skipped, {error_count} errors")
+
+    if not course_codes:
+        print("No courses to generate syllabi for.")
+        return 1 if error_count else 0
+
+    # --- Step 2: Generate ---
+    print(f"\n=== Step 2: Generating {len(course_codes)} syllabus document(s) ===\n")
+
+    gen_results = []
+    for i, code in enumerate(course_codes, 1):
+        print(f"[{i}/{len(course_codes)}] {code}... ", end="", flush=True)
+        result = generate_syllabus(
+            db_path=db_path,
+            course_code=code,
+            program_code=program,
+            term=term,
+            instructor=instructor,
+            template_path=template,
+            output_dir=output_dir,
+            pdf=gen_pdf,
+        )
+        print(result.status)
+        gen_results.append(result)
+
+    # --- Summary ---
+    gen_success = [r for r in gen_results if r.status == "success"]
+    gen_errors = [r for r in gen_results if r.status == "error"]
+
+    print(f"\n=== Summary ===")
+    print(f"  Files processed:  {len(ingest_results)}")
+    print(f"  Courses ingested: {success_count}")
+    print(f"  Syllabi generated: {len(gen_success)}")
+    if gen_errors:
+        print(f"  Generation errors: {len(gen_errors)}")
+        for r in gen_errors:
+            print(f"    {r.course_code or '(unknown)'}: {r.message}")
+
+    if gen_success:
+        print(f"\nOutput files:")
+        for r in gen_success:
+            if r.docx_path:
+                print(f"  {r.docx_path}")
+
+    return 1 if gen_errors and not gen_success else 0
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     """Export data from the database in CSV or JSON format."""
     from abet_syllabus.export import export_courses, export_clos, export_plo_matrix
@@ -837,6 +934,43 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # --- run (full pipeline) ---
+    p_run = subparsers.add_parser(
+        "run",
+        help="Full pipeline: ingest course files then generate ABET syllabi",
+    )
+    p_run.add_argument("path", help="Path to a file or directory to process")
+    p_run.add_argument(
+        "--program", "-p", default=None,
+        help="Program code (e.g., MATH, AS, DATA)",
+    )
+    p_run.add_argument("--term", "-t", default=None, help="Term code (e.g., T252)")
+    p_run.add_argument(
+        "--output", "-o", default=None,
+        help="Output directory for generated syllabi",
+    )
+    p_run.add_argument(
+        "--recursive", "-r", action="store_true",
+        help="Process subdirectories",
+    )
+    p_run.add_argument(
+        "--no-pdf", action="store_true",
+        help="Skip PDF generation (DOCX only)",
+    )
+    p_run.add_argument(
+        "--template", default=None,
+        help="Path to DOCX template",
+    )
+    p_run.add_argument(
+        "--instructor", default=None,
+        help="Instructor name to include",
+    )
+    p_run.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
+    )
+    p_run.set_defaults(func=cmd_run)
 
     # --- extract ---
     p_extract = subparsers.add_parser(

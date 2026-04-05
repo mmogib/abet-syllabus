@@ -45,3 +45,26 @@ def test_generate_no_db():
     """Generate without a database should return error (1)."""
     result = main(["generate", "MATH101", "--program", "MATH", "--term", "T252"])
     assert result == 1
+
+
+def test_run_nonexistent_path():
+    """Run with a nonexistent path should return error (1)."""
+    result = main(["run", "nonexistent/path", "-t", "T252"])
+    assert result == 1
+
+
+def test_run_parser():
+    """Run subcommand parses all flags correctly."""
+    parser = build_parser()
+    args = parser.parse_args([
+        "run", "somepath", "-p", "MATH", "-t", "T252",
+        "-o", "./output", "-r", "--no-pdf", "--instructor", "Dr. X",
+    ])
+    assert args.command == "run"
+    assert args.path == "somepath"
+    assert args.program == "MATH"
+    assert args.term == "T252"
+    assert args.output == "./output"
+    assert args.recursive is True
+    assert args.no_pdf is True
+    assert args.instructor == "Dr. X"
