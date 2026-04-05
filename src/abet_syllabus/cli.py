@@ -4,8 +4,49 @@ from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from abet_syllabus import __version__
+
+
+def cmd_extract(args: argparse.Namespace) -> int:
+    """Extract text and tables from course specification file(s)."""
+    from abet_syllabus.extract import extract_file, extract_folder
+
+    path = Path(args.path)
+    if not path.exists():
+        print(f"Error: path not found: {path}", file=sys.stderr)
+        return 1
+
+    if path.is_file():
+        try:
+            results = [extract_file(path)]
+        except (ValueError, OSError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    elif path.is_dir():
+        results = extract_folder(path, recursive=args.recursive)
+    else:
+        print(f"Error: not a file or directory: {path}", file=sys.stderr)
+        return 1
+
+    if not results:
+        print("No supported files found.")
+        return 0
+
+    for result in results:
+        name = Path(result.file_path).name
+        text_len = len(result.raw_text)
+        table_count = len(result.tables)
+        preview = result.raw_text[:200].replace("\n", " ")
+        print(f"--- {name} ---")
+        print(f"  Format:  {result.format_type}")
+        print(f"  Tables:  {table_count}")
+        print(f"  Text:    {text_len} chars")
+        print(f"  Preview: {preview}...")
+        print()
+
+    return 0
 
 
 def cmd_ingest(args: argparse.Namespace) -> int:
@@ -47,6 +88,18 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
+
+    # --- extract ---
+    p_extract = subparsers.add_parser(
+        "extract",
+        help="Extract text and tables from course specification file(s)",
+    )
+    p_extract.add_argument("path", help="Path to a file or directory to extract")
+    p_extract.add_argument(
+        "--recursive", "-r", action="store_true",
+        help="Process subdirectories",
+    )
+    p_extract.set_defaults(func=cmd_extract)
 
     # --- ingest ---
     p_ingest = subparsers.add_parser(

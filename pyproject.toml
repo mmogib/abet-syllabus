@@ -22,6 +22,7 @@ classifiers = [
 ]
 
 dependencies = [
+    "pdfplumber>=0.10",
     "python-docx>=1.0",
     "PyYAML>=6.0",
     "defusedxml>=0.7",
