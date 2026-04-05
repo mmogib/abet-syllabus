@@ -52,7 +52,7 @@ def upsert_plo(conn: sqlite3.Connection, plo: PloDefinition) -> int:
              plo_label = excluded.plo_label,
              plo_description = excluded.plo_description,
              sequence = excluded.sequence""",
-        (plo.program_code, plo.plo_code, plo.label if hasattr(plo, 'label') else plo.plo_label,
+        (plo.program_code, plo.plo_code, plo.plo_label,
          plo.plo_description, plo.sequence),
     )
     conn.commit()
