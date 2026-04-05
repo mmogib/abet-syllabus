@@ -41,6 +41,7 @@ def test_map_missing_course(tmp_path):
     assert result == 1
 
 
-def test_generate_placeholder():
+def test_generate_no_db():
+    """Generate without a database should return error (1)."""
     result = main(["generate", "MATH101", "--program", "MATH", "--term", "T252"])
-    assert result == 0
+    assert result == 1

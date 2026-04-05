@@ -32,6 +32,9 @@ dependencies = [
 ai = [
     "anthropic>=0.30",
 ]
+pdf = [
+    "docx2pdf>=0.1.8",
+]
 dev = [
     "pytest>=7.0",
 ]

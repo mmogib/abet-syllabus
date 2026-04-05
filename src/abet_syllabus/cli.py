@@ -553,9 +553,70 @@ def cmd_map(args: argparse.Namespace) -> int:
 
 def cmd_generate(args: argparse.Namespace) -> int:
     """Generate ABET syllabus documents."""
-    print(f"[generate] course={args.course}, program={args.program}, term={args.term}")
-    print("Not yet implemented (Stage 7).")
-    return 0
+    from abet_syllabus.generate import generate_syllabus, generate_program
+
+    db_path = args.db
+    db_file = Path(db_path)
+    if not db_file.exists():
+        print(f"Error: database not found: {db_path}", file=sys.stderr)
+        print("Run 'abet-syllabus ingest' first to create the database.")
+        return 1
+
+    template = getattr(args, "template", None)
+    output_dir = args.output
+    no_pdf = getattr(args, "no_pdf", False)
+    gen_pdf = not no_pdf
+    instructor = getattr(args, "instructor", None)
+
+    if args.gen_all:
+        if not args.program:
+            print("Error: --program is required with --all", file=sys.stderr)
+            return 1
+
+        results = generate_program(
+            db_path=db_path,
+            program_code=args.program,
+            term=args.term,
+            template_path=template,
+            output_dir=output_dir,
+            pdf=gen_pdf,
+        )
+    else:
+        if not args.course:
+            print("Error: provide a course code or use --all", file=sys.stderr)
+            return 1
+
+        result = generate_syllabus(
+            db_path=db_path,
+            course_code=args.course,
+            program_code=args.program,
+            term=args.term,
+            instructor=instructor,
+            template_path=template,
+            output_dir=output_dir,
+            pdf=gen_pdf,
+        )
+        results = [result]
+
+    # Print results
+    success = [r for r in results if r.status == "success"]
+    errors = [r for r in results if r.status == "error"]
+
+    if success:
+        print(f"\nGenerated {len(success)} syllabus document(s):")
+        for r in success:
+            print(f"  {r.course_code}: {r.message}")
+            if r.docx_path:
+                print(f"    DOCX: {r.docx_path}")
+            if r.pdf_path:
+                print(f"    PDF:  {r.pdf_path}")
+
+    if errors:
+        print(f"\nErrors ({len(errors)}):")
+        for r in errors:
+            print(f"  {r.course_code or '(unknown)'}: {r.message}")
+
+    return 1 if errors and not success else 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -684,7 +745,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     # --- generate ---
     p_gen = subparsers.add_parser("generate", help="Generate ABET syllabus document(s)")
-    p_gen.add_argument("course", help="Course code (e.g., MATH 101)")
+    p_gen.add_argument(
+        "course", nargs="?", default=None,
+        help="Course code (e.g., 'MATH 101')",
+    )
     p_gen.add_argument("--program", "-p", default=None, help="Program code")
     p_gen.add_argument("--term", "-t", default=None, help="Term code (e.g., T252)")
     p_gen.add_argument(
@@ -694,6 +758,22 @@ def build_parser() -> argparse.ArgumentParser:
     p_gen.add_argument(
         "--all", dest="gen_all", action="store_true",
         help="Generate for all courses in a program",
+    )
+    p_gen.add_argument(
+        "--no-pdf", action="store_true",
+        help="Skip PDF generation (DOCX only)",
+    )
+    p_gen.add_argument(
+        "--template", default=None,
+        help="Path to DOCX template (default: resources/templates/ABETSyllabusTemplate.docx)",
+    )
+    p_gen.add_argument(
+        "--instructor", default=None,
+        help="Instructor name to include in the syllabus",
+    )
+    p_gen.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
     )
     p_gen.set_defaults(func=cmd_generate)
 
