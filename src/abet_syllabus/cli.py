@@ -49,6 +49,58 @@ def cmd_extract(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_parse(args: argparse.Namespace) -> int:
+    """Parse course specification file(s) and display structured data."""
+    from abet_syllabus.parse import parse_file, parse_folder
+
+    path = Path(args.path)
+    if not path.exists():
+        print(f"Error: path not found: {path}", file=sys.stderr)
+        return 1
+
+    if path.is_file():
+        try:
+            courses = [parse_file(path)]
+        except (ValueError, OSError) as exc:
+            print(f"Error: {exc}", file=sys.stderr)
+            return 1
+    elif path.is_dir():
+        courses = parse_folder(path, recursive=args.recursive)
+    else:
+        print(f"Error: not a file or directory: {path}", file=sys.stderr)
+        return 1
+
+    if not courses:
+        print("No supported files found.")
+        return 0
+
+    for course in courses:
+        name = Path(course.source_file).name
+        print(f"--- {name} ---")
+        print(f"  Course Code:  {course.course_code or '(not found)'}")
+        print(f"  Title:        {course.course_title or '(not found)'}")
+        print(f"  Credits:      {course.credit_hours_raw or '(not found)'}")
+        print(f"  Format:       {course.format_type}")
+        print(f"  CLOs:         {len(course.clos)}")
+        print(f"  Topics:       {len(course.topics)}")
+        print(f"  Assessments:  {len(course.assessments)}")
+        print(f"  Textbooks:    {len(course.textbooks)}")
+
+        if course.warnings:
+            print(f"  Warnings:")
+            for w in course.warnings:
+                print(f"    - {w}")
+
+        if course.confidence:
+            confs = ", ".join(
+                f"{k}={v:.0%}" for k, v in sorted(course.confidence.items())
+            )
+            print(f"  Confidence:   {confs}")
+        print()
+
+    return 0
+
+
 def cmd_ingest(args: argparse.Namespace) -> int:
     """Process course specification files into the database."""
     print(f"[ingest] path={args.path}, program={args.program}, recursive={args.recursive}")
@@ -100,6 +152,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="Process subdirectories",
     )
     p_extract.set_defaults(func=cmd_extract)
+
+    # --- parse ---
+    p_parse = subparsers.add_parser(
+        "parse",
+        help="Parse course specification file(s) and show structured data",
+    )
+    p_parse.add_argument("path", help="Path to a file or directory to parse")
+    p_parse.add_argument(
+        "--recursive", "-r", action="store_true",
+        help="Process subdirectories",
+    )
+    p_parse.set_defaults(func=cmd_parse)
 
     # --- ingest ---
     p_ingest = subparsers.add_parser(

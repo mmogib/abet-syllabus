@@ -6,13 +6,32 @@ from pathlib import Path
 from typing import Any
 
 from docx import Document
+from lxml import etree
 
 from abet_syllabus.extract.models import ExtractedTable, ExtractionResult
 
+# XML namespace for WordprocessingML
+_WML_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
+_NS = {"w": _WML_NS}
+
 
 def _extract_cell_text(cell: Any) -> str:
-    """Extract text from a table cell, handling merged cells gracefully."""
-    return cell.text.strip() if cell.text else ""
+    """Extract text from a table cell, including SDT (content control) text.
+
+    python-docx's ``cell.text`` skips content inside ``<w:sdt>`` structured
+    document tags (form-field content controls).  Many CRF2 DOCX files store
+    field values (title, code, credits, etc.) inside SDTs, so ``cell.text``
+    returns only the label.  This helper reads *all* ``<w:t>`` elements in the
+    cell's XML, regardless of whether they are inside an SDT.
+    """
+    tc = cell._tc
+    paragraphs: list[str] = []
+    for p_elem in tc.findall(".//w:p", _NS):
+        # Collect all text runs in this paragraph, including SDT content
+        runs = p_elem.findall(".//w:r/w:t", _NS)
+        p_text = "".join(r.text or "" for r in runs)
+        paragraphs.append(p_text)
+    return "\n".join(paragraphs).strip()
 
 
 def extract_docx(file_path: str | Path) -> ExtractionResult:
