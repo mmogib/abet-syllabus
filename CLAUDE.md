@@ -73,6 +73,20 @@ Two distinct formats exist across the university:
 - DOCX + PDF generated from `resources/templates/ABETSyllabusTemplate.docx`
 - All extracted data stored in a central SQLite database
 
+## Development Workflow
+
+Each implementation stage follows a 4-step agent pipeline:
+
+1. **Builder agent** — writes code + tests in an isolated git worktree
+2. **Test runner agent** — runs full test suite, reports failures
+3. **Reviewer agent** — checks code quality, security, CLAUDE.md adherence
+4. **Orchestrator** — verifies spec alignment, merges or sends back for fixes
+
+Every spawned agent must be briefed with:
+- The conda `claude` env rule (see Python Environment above)
+- Security and dependency rules (see below)
+- Project structure and existing patterns
+
 ## Development Rules
 
 - All decisions and plans live in `notes/` with `status: active` or `status: complete`
