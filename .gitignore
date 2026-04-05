@@ -31,6 +31,12 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
+# Project data (binary course files, PLOs, templates — not tracked)
+resources/
+
+# Project notes (local discussion/planning docs)
+notes/
+
 # Project output
 output/
 *.generated.docx
