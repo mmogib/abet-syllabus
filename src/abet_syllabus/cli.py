@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import logging
 import sys
 from pathlib import Path
 
 from abet_syllabus import __version__
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "abet_syllabus.db"
 
@@ -17,19 +20,19 @@ def cmd_extract(args: argparse.Namespace) -> int:
 
     path = Path(args.path)
     if not path.exists():
-        print(f"Error: path not found: {path}", file=sys.stderr)
+        logger.error("Path not found: %s", path)
         return 1
 
     if path.is_file():
         try:
             results = [extract_file(path)]
         except (ValueError, OSError) as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            logger.error("Extraction failed: %s", exc)
             return 1
     elif path.is_dir():
         results = extract_folder(path, recursive=args.recursive)
     else:
-        print(f"Error: not a file or directory: {path}", file=sys.stderr)
+        logger.error("Not a file or directory: %s", path)
         return 1
 
     if not results:
@@ -57,19 +60,19 @@ def cmd_parse(args: argparse.Namespace) -> int:
 
     path = Path(args.path)
     if not path.exists():
-        print(f"Error: path not found: {path}", file=sys.stderr)
+        logger.error("Path not found: %s", path)
         return 1
 
     if path.is_file():
         try:
             courses = [parse_file(path)]
         except (ValueError, OSError) as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            logger.error("Parse failed: %s", exc)
             return 1
     elif path.is_dir():
         courses = parse_folder(path, recursive=args.recursive)
     else:
-        print(f"Error: not a file or directory: {path}", file=sys.stderr)
+        logger.error("Not a file or directory: %s", path)
         return 1
 
     if not courses:
@@ -111,15 +114,20 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     db_path = args.db
 
     if not path.exists():
-        print(f"Error: path not found: {path}", file=sys.stderr)
+        logger.error("Path not found: %s", path)
         return 1
 
     if path.is_file():
-        results = [ingest_file(path, db_path, program=args.program)]
+        print(f"[1/1] {path.name}... ", end="", flush=True)
+        result = ingest_file(path, db_path, program=args.program)
+        print(result.status)
+        results = [result]
     elif path.is_dir():
-        results = ingest_folder(path, db_path, program=args.program, recursive=args.recursive)
+        results = _ingest_folder_with_progress(
+            path, db_path, program=args.program, recursive=args.recursive
+        )
     else:
-        print(f"Error: not a file or directory: {path}", file=sys.stderr)
+        logger.error("Not a file or directory: %s", path)
         return 1
 
     if not results:
@@ -161,13 +169,44 @@ def cmd_ingest(args: argparse.Namespace) -> int:
     return 1 if errors and not success else 0
 
 
+def _ingest_folder_with_progress(
+    path: Path,
+    db_path: str,
+    program: str | None = None,
+    recursive: bool = False,
+) -> list:
+    """Ingest a folder with per-file progress output."""
+    from abet_syllabus.extract.detector import is_supported
+    from abet_syllabus.ingest import ingest_file
+
+    # Collect supported files
+    pattern = "**/*" if recursive else "*"
+    files = sorted(
+        p for p in path.glob(pattern)
+        if p.is_file() and is_supported(p)
+    )
+
+    if not files:
+        return []
+
+    total = len(files)
+    results = []
+    for i, file_path in enumerate(files, 1):
+        print(f"[{i}/{total}] {file_path.name}... ", end="", flush=True)
+        result = ingest_file(file_path, db_path, program=program)
+        print(result.status)
+        results.append(result)
+
+    return results
+
+
 def cmd_ingest_plos(args: argparse.Namespace) -> int:
     """Load PLO definitions from a CSV file into the database."""
     from abet_syllabus.ingest import ingest_plos
 
     csv_path = Path(args.csv_path)
     if not csv_path.exists():
-        print(f"Error: file not found: {csv_path}", file=sys.stderr)
+        logger.error("File not found: %s", csv_path)
         return 1
 
     try:
@@ -175,7 +214,7 @@ def cmd_ingest_plos(args: argparse.Namespace) -> int:
         print(f"Loaded {count} PLO definitions into {args.db}")
         return 0
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        logger.error("Failed to load PLOs: %s", exc)
         return 1
 
 
@@ -187,7 +226,7 @@ def cmd_query(args: argparse.Namespace) -> int:
     db_path = args.db
     db_file = Path(db_path)
     if not db_file.exists():
-        print(f"Error: database not found: {db_path}", file=sys.stderr)
+        logger.error("Database not found: %s", db_path)
         print("Run 'abet-syllabus ingest' first to create the database.")
         return 1
 
@@ -215,7 +254,7 @@ def _dispatch_query(conn, args: argparse.Namespace) -> int:
     elif qcmd == "plo-matrix":
         return _query_plo_matrix(conn, args)
     else:
-        print(f"Unknown query command: {qcmd}", file=sys.stderr)
+        logger.error("Unknown query command: %s", qcmd)
         return 1
 
 
@@ -255,7 +294,7 @@ def _query_course_detail(conn, args: argparse.Namespace) -> int:
     code = args.code.upper()
     course = repo.get_course(conn, code)
     if course is None:
-        print(f"Course not found: {code}", file=sys.stderr)
+        logger.error("Course not found: %s", code)
         return 1
 
     # Basic info
@@ -327,7 +366,7 @@ def _query_clos(conn, args: argparse.Namespace) -> int:
     code = args.code.upper()
     course = repo.get_course(conn, code)
     if course is None:
-        print(f"Course not found: {code}", file=sys.stderr)
+        logger.error("Course not found: %s", code)
         return 1
 
     clos = repo.get_course_clos(conn, course.id)
@@ -384,17 +423,12 @@ def _query_stats(conn) -> int:
 
 def _query_plo_matrix(conn, args: argparse.Namespace) -> int:
     """Show CLO-PLO mapping matrix for a program."""
-    from abet_syllabus.mapping.engine import export_plo_matrix
+    from abet_syllabus.db import repository as repo
 
     program = getattr(args, "program", None)
     if not program:
-        print("Error: --program / -p is required for plo-matrix", file=sys.stderr)
+        logger.error("--program / -p is required for plo-matrix")
         return 1
-
-    # We need db_path for the engine function; reconstruct from conn
-    # Actually, export_plo_matrix needs db_path, but we already have conn.
-    # Re-implement using conn directly to avoid opening a second connection.
-    from abet_syllabus.db import repository as repo
 
     courses = repo.get_all_courses(conn, program_code=program)
     if not courses:
@@ -451,7 +485,7 @@ def cmd_map(args: argparse.Namespace) -> int:
     if do_review and not map_all:
         course_code = args.course
         if not course_code:
-            print("Error: course code required for --review", file=sys.stderr)
+            logger.error("Course code required for --review")
             return 1
         mappings = review_mappings(db_path, course_code, program)
         if not mappings:
@@ -481,7 +515,7 @@ def cmd_map(args: argparse.Namespace) -> int:
     if do_approve and not map_all:
         course_code = args.course
         if not course_code:
-            print("Error: course code required for --approve", file=sys.stderr)
+            logger.error("Course code required for --approve")
             return 1
         count = approve_mappings(db_path, course_code, program)
         if count > 0:
@@ -495,10 +529,10 @@ def cmd_map(args: argparse.Namespace) -> int:
         try:
             all_results = map_program(db_path, program, force=force)
         except ValueError as exc:
-            print(f"Error: {exc}", file=sys.stderr)
+            logger.error("Mapping failed: %s", exc)
             return 1
         except RuntimeError as exc:
-            print(f"API Error: {exc}", file=sys.stderr)
+            logger.error("API error: %s", exc)
             return 1
 
         if not all_results:
@@ -520,16 +554,16 @@ def cmd_map(args: argparse.Namespace) -> int:
     # --- Map a single course ---
     course_code = args.course
     if not course_code:
-        print("Error: course code required (or use --all)", file=sys.stderr)
+        logger.error("Course code required (or use --all)")
         return 1
 
     try:
         results = map_course(db_path, course_code, program, force=force)
     except ValueError as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        logger.error("Mapping failed: %s", exc)
         return 1
     except RuntimeError as exc:
-        print(f"API Error: {exc}", file=sys.stderr)
+        logger.error("API error: %s", exc)
         return 1
 
     if not results:
@@ -558,7 +592,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
     db_path = args.db
     db_file = Path(db_path)
     if not db_file.exists():
-        print(f"Error: database not found: {db_path}", file=sys.stderr)
+        logger.error("Database not found: %s", db_path)
         print("Run 'abet-syllabus ingest' first to create the database.")
         return 1
 
@@ -570,7 +604,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
 
     if args.gen_all:
         if not args.program:
-            print("Error: --program is required with --all", file=sys.stderr)
+            logger.error("--program is required with --all")
             return 1
 
         results = generate_program(
@@ -583,7 +617,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         )
     else:
         if not args.course:
-            print("Error: provide a course code or use --all", file=sys.stderr)
+            logger.error("Provide a course code or use --all")
             return 1
 
         result = generate_syllabus(
@@ -598,7 +632,7 @@ def cmd_generate(args: argparse.Namespace) -> int:
         )
         results = [result]
 
-    # Print results
+    # Print results with progress for batch
     success = [r for r in results if r.status == "success"]
     errors = [r for r in results if r.status == "error"]
 
@@ -619,6 +653,165 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 1 if errors and not success else 0
 
 
+def cmd_export(args: argparse.Namespace) -> int:
+    """Export data from the database in CSV or JSON format."""
+    from abet_syllabus.export import export_courses, export_clos, export_plo_matrix
+
+    db_path = args.db
+    db_file = Path(db_path)
+    if not db_file.exists():
+        logger.error("Database not found: %s", db_path)
+        print("Run 'abet-syllabus ingest' first to create the database.")
+        return 1
+
+    export_cmd = args.export_command
+    fmt = getattr(args, "format", "csv")
+    output = getattr(args, "output", None)
+
+    try:
+        if export_cmd == "courses":
+            program = getattr(args, "program", None)
+            content = export_courses(db_path, fmt=fmt, output=output, program=program)
+        elif export_cmd == "clos":
+            course_code = args.code
+            content = export_clos(db_path, course_code, fmt=fmt, output=output)
+        elif export_cmd == "plo-matrix":
+            program = getattr(args, "program", None)
+            if not program:
+                logger.error("--program / -p is required for plo-matrix export")
+                return 1
+            content = export_plo_matrix(db_path, program, fmt=fmt, output=output)
+        else:
+            logger.error("Unknown export command: %s", export_cmd)
+            return 1
+    except ValueError as exc:
+        logger.error("Export failed: %s", exc)
+        return 1
+
+    if output:
+        print(f"Exported to {output}")
+    return 0
+
+
+def cmd_status(args: argparse.Namespace) -> int:
+    """Show database status and summary."""
+    from abet_syllabus.db import repository as repo
+    from abet_syllabus.db.schema import init_db
+
+    db_path = args.db
+    db_file = Path(db_path)
+    if not db_file.exists():
+        logger.error("Database not found: %s", db_path)
+        print("No database found. Run 'abet-syllabus ingest' first.")
+        return 1
+
+    conn = init_db(db_path)
+    try:
+        # Programs
+        programs = repo.get_programs(conn)
+        program_codes = [p.program_code for p in programs]
+
+        # Courses
+        all_courses = repo.get_all_courses(conn)
+        total_courses = len(all_courses)
+
+        # Per-course data counts
+        with_clos = 0
+        with_topics = 0
+        with_textbooks = 0
+        with_assessments = 0
+        ready_count = 0
+
+        for course in all_courses:
+            has_clos = len(repo.get_course_clos(conn, course.id)) > 0
+            has_topics = len(repo.get_course_topics(conn, course.id)) > 0
+            has_textbooks = len(repo.get_course_textbooks(conn, course.id)) > 0
+            has_assessments = len(repo.get_course_assessments(conn, course.id)) > 0
+
+            if has_clos:
+                with_clos += 1
+            if has_topics:
+                with_topics += 1
+            if has_textbooks:
+                with_textbooks += 1
+            if has_assessments:
+                with_assessments += 1
+
+            # Minimum required data: title + CLOs
+            has_title = bool(course.course_title and course.course_title.strip())
+            if has_title and has_clos:
+                ready_count += 1
+
+        # CLO-PLO mappings
+        stats = repo.get_stats(conn)
+        total_mappings = stats.get("clo_plo_mappings", 0)
+
+        # Count by source
+        extracted = conn.execute(
+            "SELECT COUNT(*) as c FROM clo_plo_mappings WHERE mapping_source = 'extracted'"
+        ).fetchone()["c"]
+        ai_suggested = conn.execute(
+            "SELECT COUNT(*) as c FROM clo_plo_mappings WHERE mapping_source = 'ai_suggested'"
+        ).fetchone()["c"]
+        approved = conn.execute(
+            "SELECT COUNT(*) as c FROM clo_plo_mappings WHERE approved = 1"
+        ).fetchone()["c"]
+
+        # Source files
+        source_files = stats.get("source_files", 0)
+        last_ingested_row = conn.execute(
+            "SELECT MAX(processed_at) as last_at FROM source_files"
+        ).fetchone()
+        last_ingested = last_ingested_row["last_at"] if last_ingested_row else None
+
+        # Output
+        print(f"Database: {db_path}")
+        prog_list = ", ".join(program_codes) if program_codes else "(none)"
+        print(f"Programs: {len(programs)} ({prog_list})")
+        print(f"Courses: {total_courses}")
+        print(f"  - With CLOs: {with_clos}/{total_courses}")
+        print(f"  - With topics: {with_topics}/{total_courses}")
+        print(f"  - With textbooks: {with_textbooks}/{total_courses}")
+        print(f"  - With assessments: {with_assessments}/{total_courses}")
+        print()
+        print("CLO-PLO Mappings:")
+        print(f"  - Total mappings: {total_mappings}")
+        print(f"  - Extracted: {extracted}")
+        print(f"  - AI suggested: {ai_suggested}")
+        print(f"  - Approved: {approved}")
+        print()
+        print(f"Source files: {source_files}")
+        if last_ingested:
+            print(f"  - Last ingested: {last_ingested}")
+        print()
+        print(f"Ready to generate: {ready_count}/{total_courses} courses have minimum required data")
+
+    finally:
+        conn.close()
+
+    return 0
+
+
+def cmd_validate(args: argparse.Namespace) -> int:
+    """Validate data quality in the database."""
+    from abet_syllabus.validate import validate_database
+
+    db_path = args.db
+    db_file = Path(db_path)
+    if not db_file.exists():
+        logger.error("Database not found: %s", db_path)
+        print("No database found. Run 'abet-syllabus ingest' first.")
+        return 1
+
+    program = getattr(args, "program", None)
+    report = validate_database(db_path, program_code=program)
+
+    print(report.format())
+
+    # Return 1 if there are errors
+    return 1 if report.errors else 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
@@ -627,6 +820,20 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--version", action="version", version=f"%(prog)s {__version__}"
+    )
+
+    # Global flags
+    parser.add_argument(
+        "--verbose", "-v", action="store_true",
+        help="Enable verbose (DEBUG) logging output",
+    )
+    parser.add_argument(
+        "--quiet", "-q", action="store_true",
+        help="Suppress all logging except warnings and errors",
+    )
+    parser.add_argument(
+        "--config", default=None,
+        help="Path to a YAML configuration file",
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
@@ -777,6 +984,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     p_gen.set_defaults(func=cmd_generate)
 
+    # --- export ---
+    p_export = subparsers.add_parser("export", help="Export data in CSV or JSON format")
+    p_export.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
+    )
+    export_sub = p_export.add_subparsers(dest="export_command", help="Export subcommands")
+
+    e_courses = export_sub.add_parser("courses", help="Export all courses")
+    e_courses.add_argument("--format", "-f", default="csv", choices=["csv", "json"],
+                           help="Output format (default: csv)")
+    e_courses.add_argument("--output", "-o", default=None, help="Output file path")
+    e_courses.add_argument("--program", "-p", default=None, help="Filter by program")
+    e_courses.set_defaults(func=cmd_export)
+
+    e_clos = export_sub.add_parser("clos", help="Export CLOs for a course")
+    e_clos.add_argument("code", help="Course code (e.g., 'MATH 101')")
+    e_clos.add_argument("--format", "-f", default="csv", choices=["csv", "json"],
+                        help="Output format (default: csv)")
+    e_clos.add_argument("--output", "-o", default=None, help="Output file path")
+    e_clos.set_defaults(func=cmd_export)
+
+    e_matrix = export_sub.add_parser("plo-matrix", help="Export CLO-PLO mapping matrix")
+    e_matrix.add_argument("--program", "-p", required=True, help="Program code")
+    e_matrix.add_argument("--format", "-f", default="csv", choices=["csv", "json"],
+                          help="Output format (default: csv)")
+    e_matrix.add_argument("--output", "-o", default=None, help="Output file path")
+    e_matrix.set_defaults(func=cmd_export)
+
+    # --- status ---
+    p_status = subparsers.add_parser("status", help="Show database status and summary")
+    p_status.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
+    )
+    p_status.set_defaults(func=cmd_status)
+
+    # --- validate ---
+    p_validate = subparsers.add_parser("validate", help="Validate data quality")
+    p_validate.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
+    )
+    p_validate.add_argument(
+        "--program", "-p", default=None,
+        help="Program code to scope validation",
+    )
+    p_validate.set_defaults(func=cmd_validate)
+
     return parser
 
 
@@ -788,6 +1044,27 @@ def main(argv: list[str] | None = None) -> int:
     if args.command is None:
         parser.print_help()
         return 1
+
+    # Setup logging based on global flags
+    from abet_syllabus.logging_config import setup_logging
+    from abet_syllabus.config import Config
+
+    # Load config
+    config_path = getattr(args, "config", None)
+    config = Config.load(config_path)
+
+    # Apply config defaults to args if not explicitly set
+    verbose = getattr(args, "verbose", False)
+    quiet = getattr(args, "quiet", False)
+
+    # Determine log file from config
+    log_file = config.log_file if not quiet else None
+
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+
+    # Apply config db_path as default if args.db is the default
+    if hasattr(args, "db") and args.db == DEFAULT_DB_PATH:
+        args.db = config.db_path
 
     if hasattr(args, "func"):
         return args.func(args)
