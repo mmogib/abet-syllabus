@@ -14,7 +14,6 @@ Public API
 """
 
 from .provider import MappingProvider, MappingResult
-from .anthropic_provider import AnthropicProvider
 from .engine import (
     approve_mappings,
     export_plo_matrix,
@@ -25,7 +24,6 @@ from .engine import (
 )
 
 __all__ = [
-    "AnthropicProvider",
     "MappingProvider",
     "MappingResult",
     "approve_mappings",
