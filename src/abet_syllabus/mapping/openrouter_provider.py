@@ -22,7 +22,7 @@ from .provider import MappingProvider, MappingResult
 logger = logging.getLogger(__name__)
 
 # Default model on OpenRouter (cost-effective Claude)
-DEFAULT_MODEL = "qwen/qwen3-30b-a3b:free"
+DEFAULT_MODEL = "qwen/qwen3.6-plus:free"
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
