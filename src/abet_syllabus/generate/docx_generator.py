@@ -74,8 +74,16 @@ def generate_docx(
 # Table fillers
 # ---------------------------------------------------------------------------
 
-def _set_cell_text(cell, text: str) -> None:
-    """Set cell text while preserving formatting of the first run if possible."""
+def _set_cell_text(cell, text: str, align_left: bool = False) -> None:
+    """Set cell text while preserving font formatting of the first run.
+
+    Args:
+        cell: The table cell to update.
+        text: The text to set.
+        align_left: If True, force left alignment (override template justification).
+    """
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
     paragraphs = cell.paragraphs
     if not paragraphs:
         cell.text = text
@@ -83,18 +91,32 @@ def _set_cell_text(cell, text: str) -> None:
 
     p = paragraphs[0]
     if p.runs:
-        # Preserve formatting from the first run
+        # Preserve font formatting from the first run but clear old text
         first_run = p.runs[0]
-        # Clear all runs
+        # Strip template bullet characters from the existing run
         for run in p.runs:
             run.text = ""
         first_run.text = text
     else:
         p.text = text
 
+    if align_left:
+        p.alignment = WD_ALIGN_PARAGRAPH.LEFT
+
     # Remove extra paragraphs beyond the first
     for extra_p in paragraphs[1:]:
         extra_p._element.getparent().remove(extra_p._element)
+
+
+def _set_cell_text_clean(cell, text: str) -> None:
+    """Set cell text, clearing all template content including bullet characters."""
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    # Clear all paragraphs and set plain text
+    cell.text = text
+    # Left-align
+    if cell.paragraphs:
+        cell.paragraphs[0].alignment = WD_ALIGN_PARAGRAPH.LEFT
 
 
 def _fill_course_identification(table, data: SyllabusData) -> None:
@@ -180,11 +202,11 @@ def _fill_textbooks(table, data: SyllabusData) -> None:
             else:
                 supplemental_texts.append(tb.text)
 
-        _set_cell_text(table.rows[1].cells[1], "\n".join(required_texts))
-        _set_cell_text(table.rows[2].cells[1], "\n".join(supplemental_texts))
+        _set_cell_text_clean(table.rows[1].cells[1], "\n".join(required_texts))
+        _set_cell_text_clean(table.rows[2].cells[1], "\n".join(supplemental_texts))
     else:
-        _set_cell_text(table.rows[1].cells[1], "")
-        _set_cell_text(table.rows[2].cells[1], "")
+        _set_cell_text_clean(table.rows[1].cells[1], "")
+        _set_cell_text_clean(table.rows[2].cells[1], "")
 
 
 def _fill_specific_info(table, data: SyllabusData) -> None:
@@ -311,7 +333,7 @@ def _fill_topics(table, data: SyllabusData) -> None:
     topic_text = "\n".join(lines)
 
     if len(table.rows) > 1:
-        _set_cell_text(table.rows[1].cells[0], topic_text)
+        _set_cell_text(table.rows[1].cells[0], topic_text, align_left=True)
     else:
         row = table.add_row()
         row.cells[0].text = topic_text
