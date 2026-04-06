@@ -247,15 +247,15 @@ class TestCloSoMatrix:
         matrix = _build_clo_so_matrix(renumbered, mappings, plo_labels)
 
         assert len(matrix) == 4
-        # CLO-1 maps to SO-1, SO-3
+        # CLO-1 maps to PLOs "1" and "3"
         assert matrix[0]["clo_label"] == "CLO-1"
-        assert matrix[0]["so_mappings"]["SO-1"] is True
-        assert matrix[0]["so_mappings"]["SO-3"] is True
-        assert matrix[0]["so_mappings"]["SO-2"] is False
+        assert matrix[0]["so_mappings"]["1"] is True
+        assert matrix[0]["so_mappings"]["3"] is True
+        assert matrix[0]["so_mappings"]["2"] is False
 
-        # CLO-3 maps to SO-5
+        # CLO-3 maps to PLO "5"
         assert matrix[2]["clo_label"] == "CLO-3"
-        assert matrix[2]["so_mappings"]["SO-5"] is True
+        assert matrix[2]["so_mappings"]["5"] is True
 
     def test_build_matrix_empty(self):
         matrix = _build_clo_so_matrix([], [], [])

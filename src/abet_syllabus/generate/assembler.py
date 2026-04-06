@@ -139,8 +139,8 @@ def _build_clo_so_matrix(
         so_mappings = {}
         mapped_plos = clo_plo_map.get(clo.clo_db_id, set())
         for plo_label in plo_labels:
-            # Convert PLO label to SO label (e.g. "1" -> "SO-1", "a" -> "SO-a")
-            so_label = f"SO-{plo_label}" if not plo_label.startswith("SO-") else plo_label
+            # Use PLO label as-is (e.g. "SO1", "K1", "S2")
+            so_label = plo_label
             so_mappings[so_label] = plo_label in mapped_plos
         result.append({
             "clo_label": clo.label,
