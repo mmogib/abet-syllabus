@@ -256,6 +256,10 @@ def _dispatch_query(conn, args: argparse.Namespace) -> int:
         return _query_stats(conn)
     elif qcmd == "plo-matrix":
         return _query_plo_matrix(conn, args)
+    elif qcmd == "coverage":
+        return _query_coverage(conn, args)
+    elif qcmd == "sql":
+        return _query_sql(conn, args)
     else:
         logger.error("Unknown query command: %s", qcmd)
         return 1
@@ -465,6 +469,114 @@ def _query_plo_matrix(conn, args: argparse.Namespace) -> int:
         print(f"No CLO-PLO mappings found for program {program}.")
         print("Run 'abet-syllabus map --all -p <program>' to generate mappings.")
 
+    return 0
+
+
+def _query_coverage(conn, args: argparse.Namespace) -> int:
+    """Show course-level PLO coverage matrix for a program."""
+    from abet_syllabus.db import repository as repo
+
+    program = getattr(args, "program", None)
+    if not program:
+        logger.error("--program / -p is required for coverage")
+        return 1
+
+    courses = repo.get_all_courses(conn, program_code=program)
+    if not courses:
+        print(f"No courses found for program {program}.")
+        return 0
+
+    plos = repo.get_plos_for_program(conn, program)
+    if not plos:
+        print(f"No PLO definitions found for program {program}.")
+        return 0
+
+    plo_labels = [p.plo_label for p in plos]
+
+    # Build coverage: for each course, which PLOs are covered by any CLO?
+    rows = []
+    for course in courses:
+        mappings = repo.get_mappings_for_course(conn, course.id, program)
+        covered = set()
+        for m in mappings:
+            plo_label = m.get("plo_label", "")
+            if plo_label:
+                covered.add(plo_label)
+        rows.append((course.course_code, covered))
+
+    # Print header
+    code_width = max(len(r[0]) for r in rows) if rows else 12
+    header_labels = "  ".join(f"{lbl:>4}" for lbl in plo_labels)
+    print(f"\nPLO Coverage Matrix -- Program: {program}")
+    print(f"{'Course':<{code_width}}  {header_labels}")
+    print("-" * (code_width + 2 + len(plo_labels) * 6))
+
+    for code, covered in rows:
+        marks = "  ".join(
+            f"{'x':>4}" if lbl in covered else f"{'':>4}"
+            for lbl in plo_labels
+        )
+        print(f"{code:<{code_width}}  {marks}")
+
+    # Summary row: count of courses covering each PLO
+    print("-" * (code_width + 2 + len(plo_labels) * 6))
+    counts = []
+    for lbl in plo_labels:
+        count = sum(1 for _, covered in rows if lbl in covered)
+        counts.append(f"{count:>4}")
+    print(f"{'Total':<{code_width}}  {'  '.join(counts)}")
+    print()
+
+    return 0
+
+
+def _query_sql(conn, args: argparse.Namespace) -> int:
+    """Execute a read-only SQL query and display results."""
+    query = args.sql_query.strip()
+
+    # Safety: only allow read-only statements
+    first_word = query.split()[0].upper() if query.split() else ""
+    if first_word not in ("SELECT", "WITH", "PRAGMA", "EXPLAIN"):
+        logger.error("Only SELECT, WITH, PRAGMA, and EXPLAIN queries are allowed.")
+        return 1
+
+    try:
+        cursor = conn.execute(query)
+        rows = cursor.fetchall()
+    except Exception as exc:
+        logger.error("SQL error: %s", exc)
+        return 1
+
+    if not rows:
+        print("(no results)")
+        return 0
+
+    # Get column names
+    columns = [desc[0] for desc in cursor.description]
+
+    # Calculate column widths (capped at 50)
+    col_widths = [len(c) for c in columns]
+    for row in rows:
+        for i, val in enumerate(row):
+            col_widths[i] = max(col_widths[i], len(str(val if val is not None else "")))
+    col_widths = [min(w, 50) for w in col_widths]
+
+    # Print header
+    header = "  ".join(f"{c:<{col_widths[i]}}" for i, c in enumerate(columns))
+    print(header)
+    print("  ".join("-" * w for w in col_widths))
+
+    # Print rows
+    for row in rows:
+        vals = []
+        for i, val in enumerate(row):
+            s = str(val if val is not None else "")
+            if len(s) > col_widths[i]:
+                s = s[:col_widths[i] - 3] + "..."
+            vals.append(f"{s:<{col_widths[i]}}")
+        print("  ".join(vals))
+
+    print(f"\n({len(rows)} rows)")
     return 0
 
 
@@ -1307,6 +1419,14 @@ def build_parser() -> argparse.ArgumentParser:
     q_plo_matrix = query_sub.add_parser("plo-matrix", help="Show CLO-PLO mapping matrix")
     q_plo_matrix.add_argument("--program", "-p", required=True, help="Program code")
     q_plo_matrix.set_defaults(func=cmd_query)
+
+    q_coverage = query_sub.add_parser("coverage", help="Show course-level PLO coverage matrix")
+    q_coverage.add_argument("--program", "-p", required=True, help="Program code")
+    q_coverage.set_defaults(func=cmd_query)
+
+    q_sql = query_sub.add_parser("sql", help="Execute a read-only SQL query")
+    q_sql.add_argument("sql_query", help="SQL query (SELECT only)")
+    q_sql.set_defaults(func=cmd_query)
 
     # --- map ---
     p_map = subparsers.add_parser("map", help="Run CLO-PLO mapping for a course")
