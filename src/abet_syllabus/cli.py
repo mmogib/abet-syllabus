@@ -791,6 +791,22 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
             user_prog = input("Program code not detected. Enter program code (or press Enter to skip): ").strip().upper()
             program = user_prog if user_prog else None
 
+    # --- Narrow path to program subfolder if it exists ---
+    if program and path.is_dir():
+        # Check direct subfolder: path/<program>/
+        prog_dir = path / program.lower()
+        if prog_dir.is_dir():
+            path = prog_dir
+            print(f"Using program folder: {path}")
+        else:
+            # Check inside course-descriptions/
+            for sub_name in ("course-descriptions", "course_descriptions"):
+                prog_dir = path / sub_name / program.lower()
+                if prog_dir.is_dir():
+                    path = prog_dir
+                    print(f"Using program folder: {path}")
+                    break
+
     # --- Resolve term ---
     term = args.term
     if not term:
@@ -825,10 +841,25 @@ _NON_PROGRAM_DIRS = {
 }
 
 
+def _find_program_candidates(path: Path) -> list[str]:
+    """Find alpha-named subdirs that look like program codes."""
+    try:
+        return sorted(
+            d.name.upper() for d in path.iterdir()
+            if d.is_dir()
+            and d.name.upper().isalpha()
+            and len(d.name) <= 6
+            and d.name.lower() not in _NON_PROGRAM_DIRS
+        )
+    except OSError:
+        return []
+
+
 def _detect_programs_from_path(path: Path) -> list[str]:
     """Detect candidate program codes from a directory path.
 
     Returns a sorted list of program code strings (may be empty).
+    Looks inside course-descriptions/ or course_descriptions/ if present.
     Excludes known non-program folder names.
     """
     if path.is_file():
@@ -839,20 +870,18 @@ def _detect_programs_from_path(path: Path) -> list[str]:
             return [parent_name]
         return []
 
-    # Check subdirectories for program-like names
-    try:
-        subdirs = sorted(
-            d.name.upper() for d in path.iterdir()
-            if d.is_dir()
-            and d.name.upper().isalpha()
-            and len(d.name) <= 6
-            and d.name.lower() not in _NON_PROGRAM_DIRS
-        )
-    except OSError:
-        subdirs = []
+    # Check direct subdirectories first
+    candidates = _find_program_candidates(path)
+    if candidates:
+        return candidates
 
-    if subdirs:
-        return subdirs
+    # Look inside course-descriptions/ or course_descriptions/ subfolder
+    for sub_name in ("course-descriptions", "course_descriptions"):
+        sub = path / sub_name
+        if sub.is_dir():
+            candidates = _find_program_candidates(sub)
+            if candidates:
+                return candidates
 
     # Check the directory name itself
     dir_name = path.name.upper()
