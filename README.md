@@ -98,8 +98,7 @@ abet-syllabus generate --all -p MATH -t T252 -o ./output/math/
 | `plo-alias` | Manage PLO code aliases (e.g., K1 = SO1) |
 | `map` | AI-powered CLO-PLO mapping |
 | `generate` | Produce ABET syllabus DOCX from database |
-| `query` | Inspect database (courses, CLOs, stats, coverage, SQL) |
-| `export` | Export data to CSV/JSON |
+| `query` | Inspect database, export to CSV/JSON with `-o` flag |
 | `status` | Database overview |
 | `validate` | Data quality check |
 | `extract` | Raw text/table extraction (debugging) |
@@ -168,18 +167,28 @@ abet-syllabus query stats
 abet-syllabus query sql "SELECT course_code, course_title FROM courses WHERE department='Mathematics'"
 ```
 
-## Export
+### Exporting Query Results
+
+Any query can be exported to a file with `-o`. Format is inferred from extension (`.json` for JSON, anything else for CSV):
 
 ```bash
 # Export courses to CSV
-abet-syllabus export courses -o courses.csv
-abet-syllabus export courses -p MATH --format json -o math_courses.json
+abet-syllabus query courses -o courses.csv
+
+# Export courses as JSON
+abet-syllabus query courses -p MATH -o math_courses.json
 
 # Export CLOs
-abet-syllabus export clos "MATH 101" -o math101_clos.csv
+abet-syllabus query clos "MATH 101" -o math101_clos.csv
+
+# Export PLO coverage matrix (great for ABET self-study reports)
+abet-syllabus query coverage -p MATH -o coverage.csv
 
 # Export PLO mapping matrix
-abet-syllabus export plo-matrix -p MATH -o math_matrix.csv
+abet-syllabus query plo-matrix -p MATH -o matrix.csv
+
+# Export custom SQL results
+abet-syllabus query sql "SELECT * FROM courses" -o dump.csv
 ```
 
 ## Input Formats
