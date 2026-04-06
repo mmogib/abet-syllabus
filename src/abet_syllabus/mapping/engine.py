@@ -114,34 +114,62 @@ def _resolve_plo_id(conn, plo_code: str, program_code: str) -> int | None:
     """Resolve a PLO code to its database ID for a program.
 
     Tries matching against both plo_code and plo_label fields.
+    Handles AI responses like "MATH_PLO_1 (SO1)" by trying:
+    1. Exact match on plo_code and plo_label
+    2. Stripped version without parenthetical (e.g. "MATH_PLO_1")
+    3. Content inside parentheses (e.g. "SO1")
     """
-    # Try plo_code first
-    row = conn.execute(
-        "SELECT id FROM plo_definitions WHERE plo_code = ? AND program_code = ?",
-        (plo_code, program_code),
-    ).fetchone()
-    if row:
-        return row["id"]
+    import re
 
-    # Try plo_label
-    row = conn.execute(
-        "SELECT id FROM plo_definitions WHERE plo_label = ? AND program_code = ?",
-        (plo_code, program_code),
-    ).fetchone()
-    if row:
-        return row["id"]
+    candidates = [plo_code.strip()]
+
+    # Extract parts if AI returned "CODE (LABEL)" format
+    paren_match = re.match(r"^(.+?)\s*\((.+?)\)\s*$", plo_code)
+    if paren_match:
+        candidates.append(paren_match.group(1).strip())
+        candidates.append(paren_match.group(2).strip())
+
+    for candidate in candidates:
+        # Try plo_code
+        row = conn.execute(
+            "SELECT id FROM plo_definitions WHERE plo_code = ? AND program_code = ?",
+            (candidate, program_code),
+        ).fetchone()
+        if row:
+            return row["id"]
+
+        # Try plo_label
+        row = conn.execute(
+            "SELECT id FROM plo_definitions WHERE plo_label = ? AND program_code = ?",
+            (candidate, program_code),
+        ).fetchone()
+        if row:
+            return row["id"]
 
     return None
 
 
 def _resolve_clo_id(conn, clo_code: str, course_id: int) -> int | None:
-    """Resolve a CLO code to its database ID for a course."""
-    row = conn.execute(
-        "SELECT id FROM course_clos WHERE clo_code = ? AND course_id = ?",
-        (clo_code, course_id),
-    ).fetchone()
-    if row:
-        return row["id"]
+    """Resolve a CLO code to its database ID for a course.
+
+    Handles AI responses with extra formatting (e.g. "CLO 1.1" → "1.1").
+    """
+    import re
+
+    candidates = [clo_code.strip()]
+
+    # Strip "CLO" prefix if AI added it
+    stripped = re.sub(r"^CLO[- ]*", "", clo_code, flags=re.IGNORECASE).strip()
+    if stripped and stripped != clo_code.strip():
+        candidates.append(stripped)
+
+    for candidate in candidates:
+        row = conn.execute(
+            "SELECT id FROM course_clos WHERE clo_code = ? AND course_id = ?",
+            (candidate, course_id),
+        ).fetchone()
+        if row:
+            return row["id"]
     return None
 
 
