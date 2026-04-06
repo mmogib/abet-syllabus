@@ -66,13 +66,14 @@ abet-syllabus parse <path>                               # structured parsing
 abet-syllabus ingest <path> [-p <prog>] [-r] [-f]        # extract → parse → store in DB
 abet-syllabus ingest-plos <csv>                           # load PLO definitions
 abet-syllabus query courses|course|clos|stats            # inspect the database
+abet-syllabus query courses -o courses.csv               # export query results to file
 abet-syllabus query plo-matrix -p <prog>                 # CLO-PLO mapping detail
 abet-syllabus query coverage -p <prog>                   # course-level PLO coverage matrix
+abet-syllabus query coverage -p <prog> -o coverage.json  # export coverage as JSON
 abet-syllabus query sql "<SQL>"                          # custom read-only SQL query
 abet-syllabus map <course> -p <prog>                     # AI CLO-PLO mapping
 abet-syllabus map <course> -p <prog> --model <model>     # use specific AI model
 abet-syllabus generate <course> -t <term> [--no-pdf]     # produce DOCX/PDF output
-abet-syllabus export courses|clos|plo-matrix --format csv|json
 abet-syllabus plo-alias K1 SO1 -p <prog>                 # manage PLO code aliases
 abet-syllabus plo-alias --list -p <prog>                 # list aliases
 abet-syllabus status                                     # database overview
@@ -85,6 +86,7 @@ Notes:
 - `--force`/`-f` on ingest preserves existing CLO-PLO mappings
 - PLO aliases map between naming conventions (K1/S1 → SO1/SO2)
 - Interactive prompts activate when stdin is a terminal
+- Query `-o` flag infers format from extension: `.json` for JSON, anything else for CSV
 
 ## Domain Concepts
 

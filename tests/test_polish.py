@@ -570,45 +570,154 @@ class TestBatchProgress:
 # ---------------------------------------------------------------------------
 
 
-class TestExportCLI:
-    def test_export_courses_csv(self, populated_db_path, capsys):
-        result = main(["export", "--db", populated_db_path, "courses"])
+class TestQueryFileExport:
+    """Tests for the query -o flag that exports query results to files."""
+
+    def test_query_courses_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "courses.csv")
+        result = main(["query", "--db", populated_db_path, "courses", "-o", output])
+        assert result == 0
+        assert Path(output).exists()
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        assert len(rows) == 3
+        codes = {r["course_code"] for r in rows}
+        assert "MATH 101" in codes
+        assert "course_code" in rows[0]
+        assert "clo_count" in rows[0]
+        assert "topic_count" in rows[0]
+
+    def test_query_courses_json(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "courses.json")
+        result = main(["query", "--db", populated_db_path, "courses", "-o", output])
+        assert result == 0
+        data = json.loads(Path(output).read_text(encoding="utf-8"))
+        assert isinstance(data, list)
+        assert len(data) == 3
+        assert data[0]["course_code"]
+
+    def test_query_courses_csv_with_program(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "math_courses.csv")
+        result = main([
+            "query", "--db", populated_db_path, "courses",
+            "-p", "MATH", "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        assert len(rows) == 3
+        for row in rows:
+            assert row["course_code"].startswith("MATH")
+
+    def test_query_course_detail_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "course.csv")
+        result = main([
+            "query", "--db", populated_db_path, "course", "MATH 101",
+            "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        fields = {r["field"]: r["value"] for r in rows}
+        assert fields["course_code"] == "MATH 101"
+        assert fields["course_title"] == "Calculus I"
+
+    def test_query_clos_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "clos.csv")
+        result = main([
+            "query", "--db", populated_db_path, "clos", "MATH 101",
+            "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        assert len(rows) == 2
+        assert rows[0]["clo_code"] == "1.1"
+        assert "aligned_plos" in rows[0]
+        # First CLO has SO1 mapped
+        assert rows[0]["aligned_plos"] == "SO1"
+
+    def test_query_coverage_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "coverage.csv")
+        result = main([
+            "query", "--db", populated_db_path, "coverage",
+            "-p", "MATH", "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        assert len(rows) >= 1
+        # Check header columns
+        assert "Course" in rows[0]
+        assert "SO1" in rows[0]
+        assert "SO2" in rows[0]
+        # MATH 101 should have x for SO1
+        math101_rows = [r for r in rows if r["Course"] == "MATH 101"]
+        assert len(math101_rows) == 1
+        assert math101_rows[0]["SO1"] == "x"
+
+    def test_query_coverage_json(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "coverage.json")
+        result = main([
+            "query", "--db", populated_db_path, "coverage",
+            "-p", "MATH", "-o", output,
+        ])
+        assert result == 0
+        data = json.loads(Path(output).read_text(encoding="utf-8"))
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        assert "Course" in data[0]
+        assert "SO1" in data[0]
+
+    def test_query_stats_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "stats.csv")
+        result = main([
+            "query", "--db", populated_db_path, "stats", "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        metrics = {r["metric"]: r["value"] for r in rows}
+        assert "Programs" in metrics
+        assert "Courses" in metrics
+
+    def test_query_plo_matrix_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "matrix.csv")
+        result = main([
+            "query", "--db", populated_db_path, "plo-matrix",
+            "-p", "MATH", "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        assert "SO1" in content
+
+    def test_query_sql_csv(self, populated_db_path, tmp_path):
+        output = str(tmp_path / "sql_result.csv")
+        result = main([
+            "query", "--db", populated_db_path, "sql",
+            "SELECT course_code, course_title FROM courses",
+            "-o", output,
+        ])
+        assert result == 0
+        content = Path(output).read_text(encoding="utf-8")
+        reader = csv.DictReader(StringIO(content))
+        rows = list(reader)
+        assert len(rows) == 3
+        assert "course_code" in rows[0]
+
+    def test_query_no_output_prints_to_terminal(self, populated_db_path, capsys):
+        """Without -o flag, query should print to terminal as before."""
+        result = main(["query", "--db", populated_db_path, "courses"])
         assert result == 0
         captured = capsys.readouterr()
         assert "MATH 101" in captured.out
 
-    def test_export_courses_json(self, populated_db_path, capsys):
-        result = main(["export", "--db", populated_db_path, "courses", "--format", "json"])
-        assert result == 0
-        captured = capsys.readouterr()
-        data = json.loads(captured.out)
-        assert len(data) == 3
-
-    def test_export_clos_csv(self, populated_db_path, capsys):
-        result = main(["export", "--db", populated_db_path, "clos", "MATH 101"])
-        assert result == 0
-        captured = capsys.readouterr()
-        assert "1.1" in captured.out
-
-    def test_export_clos_nonexistent(self, populated_db_path, capsys):
-        result = main(["export", "--db", populated_db_path, "clos", "FAKE 999"])
-        assert result == 1
-
-    def test_export_plo_matrix(self, populated_db_path, capsys):
-        result = main(["export", "--db", populated_db_path, "plo-matrix", "-p", "MATH"])
-        assert result == 0
-        captured = capsys.readouterr()
-        assert "SO1" in captured.out
-
-    def test_export_to_file(self, populated_db_path, tmp_path, capsys):
-        output = str(tmp_path / "out.csv")
-        result = main([
-            "export", "--db", populated_db_path, "courses",
-            "-o", output,
-        ])
-        assert result == 0
-        assert Path(output).exists()
-
-    def test_export_no_db(self, tmp_path, capsys):
-        result = main(["export", "--db", str(tmp_path / "nonexistent.db"), "courses"])
+    def test_query_no_db(self, tmp_path, capsys):
+        result = main(["query", "--db", str(tmp_path / "nonexistent.db"), "courses"])
         assert result == 1

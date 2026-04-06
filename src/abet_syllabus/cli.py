@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import logging
 import sys
+from io import StringIO
 from pathlib import Path
 
 from abet_syllabus import __version__
@@ -13,6 +16,42 @@ from abet_syllabus.parse.normalize import normalize_course_code
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_PATH = "abet_syllabus.db"
+
+
+def _infer_format(output_path: str) -> str:
+    """Infer export format from file extension. Returns 'json' or 'csv'."""
+    if output_path.lower().endswith(".json"):
+        return "json"
+    return "csv"
+
+
+def _format_rows(rows: list[dict], fmt: str) -> str:
+    """Format a list of row dicts as CSV or JSON string."""
+    if not rows:
+        return "[]" if fmt == "json" else ""
+    if fmt == "json":
+        return json.dumps(rows, indent=2, ensure_ascii=False)
+    buf = StringIO()
+    writer = csv.DictWriter(buf, fieldnames=list(rows[0].keys()))
+    writer.writeheader()
+    writer.writerows(rows)
+    return buf.getvalue()
+
+
+def _write_query_output(content: str, output_path: str | None) -> None:
+    """Write content to a file or print to terminal.
+
+    Args:
+        content: The string content to write.
+        output_path: File path, or None for stdout.
+    """
+    if output_path:
+        path = Path(output_path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        print(f"Exported to {output_path}")
+    else:
+        print(content, end="")
 
 
 def cmd_extract(args: argparse.Namespace) -> int:
@@ -267,7 +306,7 @@ def _dispatch_query(conn, args: argparse.Namespace) -> int:
     elif qcmd == "clos":
         return _query_clos(conn, args)
     elif qcmd == "stats":
-        return _query_stats(conn)
+        return _query_stats(conn, args)
     elif qcmd == "plo-matrix":
         return _query_plo_matrix(conn, args)
     elif qcmd == "coverage":
@@ -284,6 +323,7 @@ def _query_courses(conn, args: argparse.Namespace) -> int:
     from abet_syllabus.db import repository as repo
 
     program = getattr(args, "program", None)
+    output = getattr(args, "output", None)
     courses = repo.get_all_courses(conn, program_code=program)
 
     if not courses:
@@ -291,6 +331,24 @@ def _query_courses(conn, args: argparse.Namespace) -> int:
             print(f"No courses found for program '{program}'.")
         else:
             print("No courses in the database.")
+        return 0
+
+    if output:
+        fmt = _infer_format(output)
+        rows = []
+        for c in courses:
+            clo_count = len(repo.get_course_clos(conn, c.id))
+            topic_count = len(repo.get_course_topics(conn, c.id))
+            rows.append({
+                "course_code": c.course_code,
+                "course_title": c.course_title or "",
+                "credits": c.credit_hours_raw or str(c.total_credits) or "",
+                "department": c.department or "",
+                "clo_count": clo_count,
+                "topic_count": topic_count,
+            })
+        content = _format_rows(rows, fmt)
+        _write_query_output(content, output)
         return 0
 
     # Print table header
@@ -313,10 +371,31 @@ def _query_course_detail(conn, args: argparse.Namespace) -> int:
     from abet_syllabus.db import repository as repo
 
     code = normalize_course_code(args.code)
+    output = getattr(args, "output", None)
     course = repo.get_course(conn, code)
     if course is None:
         logger.error("Course not found: %s", code)
         return 1
+
+    if output:
+        fmt = _infer_format(output)
+        rows = [
+            {"field": "course_code", "value": course.course_code or ""},
+            {"field": "course_title", "value": course.course_title or ""},
+            {"field": "department", "value": course.department or ""},
+            {"field": "college", "value": course.college or ""},
+            {"field": "credit_hours_raw", "value": course.credit_hours_raw or ""},
+            {"field": "lecture_credits", "value": course.lecture_credits or ""},
+            {"field": "lab_credits", "value": course.lab_credits or ""},
+            {"field": "total_credits", "value": course.total_credits or ""},
+            {"field": "course_type", "value": course.course_type or ""},
+            {"field": "level", "value": course.level or ""},
+            {"field": "prerequisites", "value": course.prerequisites or ""},
+            {"field": "corequisites", "value": course.corequisites or ""},
+        ]
+        content = _format_rows(rows, fmt)
+        _write_query_output(content, output)
+        return 0
 
     # Basic info
     print(f"Course Code:         {course.course_code}")
@@ -385,6 +464,7 @@ def _query_clos(conn, args: argparse.Namespace) -> int:
     from abet_syllabus.db import repository as repo
 
     code = normalize_course_code(args.code)
+    output = getattr(args, "output", None)
     course = repo.get_course(conn, code)
     if course is None:
         logger.error("Course not found: %s", code)
@@ -393,6 +473,21 @@ def _query_clos(conn, args: argparse.Namespace) -> int:
     clos = repo.get_course_clos(conn, course.id)
     if not clos:
         print(f"No CLOs found for {code}.")
+        return 0
+
+    if output:
+        fmt = _infer_format(output)
+        rows = []
+        for clo in clos:
+            plo_labels = _get_clo_plo_labels(conn, clo.id)
+            rows.append({
+                "clo_code": clo.clo_code,
+                "clo_category": clo.clo_category or "",
+                "clo_text": clo.clo_text,
+                "aligned_plos": ", ".join(plo_labels) if plo_labels else "",
+            })
+        content = _format_rows(rows, fmt)
+        _write_query_output(content, output)
         return 0
 
     print(f"CLOs for {code} ({len(clos)} total):")
@@ -421,11 +516,29 @@ def _get_clo_plo_labels(conn, clo_id: int) -> list[str]:
     return [r["plo_label"] for r in rows]
 
 
-def _query_stats(conn) -> int:
+def _query_stats(conn, args: argparse.Namespace) -> int:
     """Show database statistics."""
     from abet_syllabus.db import repository as repo
 
+    output = getattr(args, "output", None)
     stats = repo.get_stats(conn)
+
+    if output:
+        fmt = _infer_format(output)
+        rows = [
+            {"metric": "Programs", "value": stats.get("programs", 0)},
+            {"metric": "Courses", "value": stats.get("courses", 0)},
+            {"metric": "CLOs", "value": stats.get("course_clos", 0)},
+            {"metric": "Topics", "value": stats.get("course_topics", 0)},
+            {"metric": "Textbooks", "value": stats.get("course_textbooks", 0)},
+            {"metric": "Assessments", "value": stats.get("course_assessment", 0)},
+            {"metric": "PLO Definitions", "value": stats.get("plo_definitions", 0)},
+            {"metric": "CLO-PLO Mappings", "value": stats.get("clo_plo_mappings", 0)},
+            {"metric": "Source Files", "value": stats.get("source_files", 0)},
+        ]
+        content = _format_rows(rows, fmt)
+        _write_query_output(content, output)
+        return 0
 
     print("Database Statistics")
     print("-" * 35)
@@ -447,6 +560,7 @@ def _query_plo_matrix(conn, args: argparse.Namespace) -> int:
     from abet_syllabus.db import repository as repo
 
     program = getattr(args, "program", None)
+    output = getattr(args, "output", None)
     if not program:
         logger.error("--program / -p is required for plo-matrix")
         return 1
@@ -454,6 +568,14 @@ def _query_plo_matrix(conn, args: argparse.Namespace) -> int:
     courses = repo.get_all_courses(conn, program_code=program)
     if not courses:
         print(f"No courses found for program {program}.")
+        return 0
+
+    if output:
+        # Use the export module's matrix function for file output
+        from abet_syllabus.export import export_plo_matrix
+        fmt = _infer_format(output)
+        export_plo_matrix(args.db, program, fmt=fmt, output=output)
+        print(f"Exported to {output}")
         return 0
 
     has_mappings = False
@@ -491,6 +613,7 @@ def _query_coverage(conn, args: argparse.Namespace) -> int:
     from abet_syllabus.db import repository as repo
 
     program = getattr(args, "program", None)
+    output = getattr(args, "output", None)
     if not program:
         logger.error("--program / -p is required for coverage")
         return 1
@@ -508,7 +631,7 @@ def _query_coverage(conn, args: argparse.Namespace) -> int:
     plo_labels = [p.plo_label for p in plos]
 
     # Build coverage: for each course, which PLOs are covered by any CLO?
-    rows = []
+    coverage_rows = []
     for course in courses:
         mappings = repo.get_mappings_for_course(conn, course.id, program)
         covered = set()
@@ -516,16 +639,28 @@ def _query_coverage(conn, args: argparse.Namespace) -> int:
             plo_label = m.get("plo_label", "")
             if plo_label:
                 covered.add(plo_label)
-        rows.append((course.course_code, covered))
+        coverage_rows.append((course.course_code, covered))
+
+    if output:
+        fmt = _infer_format(output)
+        rows = []
+        for code, covered in coverage_rows:
+            row: dict[str, str] = {"Course": code}
+            for lbl in plo_labels:
+                row[lbl] = "x" if lbl in covered else ""
+            rows.append(row)
+        content = _format_rows(rows, fmt)
+        _write_query_output(content, output)
+        return 0
 
     # Print header
-    code_width = max(len(r[0]) for r in rows) if rows else 12
+    code_width = max(len(r[0]) for r in coverage_rows) if coverage_rows else 12
     header_labels = "  ".join(f"{lbl:>4}" for lbl in plo_labels)
     print(f"\nPLO Coverage Matrix -- Program: {program}")
     print(f"{'Course':<{code_width}}  {header_labels}")
     print("-" * (code_width + 2 + len(plo_labels) * 6))
 
-    for code, covered in rows:
+    for code, covered in coverage_rows:
         marks = "  ".join(
             f"{'x':>4}" if lbl in covered else f"{'':>4}"
             for lbl in plo_labels
@@ -536,7 +671,7 @@ def _query_coverage(conn, args: argparse.Namespace) -> int:
     print("-" * (code_width + 2 + len(plo_labels) * 6))
     counts = []
     for lbl in plo_labels:
-        count = sum(1 for _, covered in rows if lbl in covered)
+        count = sum(1 for _, covered in coverage_rows if lbl in covered)
         counts.append(f"{count:>4}")
     print(f"{'Total':<{code_width}}  {'  '.join(counts)}")
     print()
@@ -547,6 +682,7 @@ def _query_coverage(conn, args: argparse.Namespace) -> int:
 def _query_sql(conn, args: argparse.Namespace) -> int:
     """Execute a read-only SQL query and display results."""
     query = args.sql_query.strip()
+    output = getattr(args, "output", None)
 
     # Safety: only allow read-only statements
     first_word = query.split()[0].upper() if query.split() else ""
@@ -567,6 +703,18 @@ def _query_sql(conn, args: argparse.Namespace) -> int:
 
     # Get column names
     columns = [desc[0] for desc in cursor.description]
+
+    if output:
+        fmt = _infer_format(output)
+        dict_rows = []
+        for row in rows:
+            dict_rows.append({
+                col: (row[i] if row[i] is not None else "")
+                for i, col in enumerate(columns)
+            })
+        content = _format_rows(dict_rows, fmt)
+        _write_query_output(content, output)
+        return 0
 
     # Calculate column widths (capped at 50)
     col_widths = [len(c) for c in columns]
@@ -1117,46 +1265,6 @@ def _run_mapping_step(db_path: str, course_codes: list[str], program: str, model
             logger.warning("Mapping failed for %s: %s", code, exc)
 
 
-def cmd_export(args: argparse.Namespace) -> int:
-    """Export data from the database in CSV or JSON format."""
-    from abet_syllabus.export import export_courses, export_clos, export_plo_matrix
-
-    db_path = args.db
-    db_file = Path(db_path)
-    if not db_file.exists():
-        logger.error("Database not found: %s", db_path)
-        print("Run 'abet-syllabus ingest' first to create the database.")
-        return 1
-
-    export_cmd = args.export_command
-    fmt = getattr(args, "format", "csv")
-    output = getattr(args, "output", None)
-
-    try:
-        if export_cmd == "courses":
-            program = getattr(args, "program", None)
-            content = export_courses(db_path, fmt=fmt, output=output, program=program)
-        elif export_cmd == "clos":
-            course_code = normalize_course_code(args.code)
-            content = export_clos(db_path, course_code, fmt=fmt, output=output)
-        elif export_cmd == "plo-matrix":
-            program = getattr(args, "program", None)
-            if not program:
-                logger.error("--program / -p is required for plo-matrix export")
-                return 1
-            content = export_plo_matrix(db_path, program, fmt=fmt, output=output)
-        else:
-            logger.error("Unknown export command: %s", export_cmd)
-            return 1
-    except ValueError as exc:
-        logger.error("Export failed: %s", exc)
-        return 1
-
-    if output:
-        print(f"Exported to {output}")
-    return 0
-
-
 def cmd_status(args: argparse.Namespace) -> int:
     """Show database status and summary."""
     from abet_syllabus.db import repository as repo
@@ -1510,29 +1618,43 @@ def build_parser() -> argparse.ArgumentParser:
 
     q_courses = query_sub.add_parser("courses", help="List all courses")
     q_courses.add_argument("--program", "-p", default=None, help="Filter by program")
+    q_courses.add_argument("--output", "-o", default=None,
+                           help="Write to file (format inferred from extension: .json or .csv)")
     q_courses.set_defaults(func=cmd_query)
 
     q_course = query_sub.add_parser("course", help="Show details for a course")
     q_course.add_argument("code", help="Course code (e.g., 'MATH 101')")
+    q_course.add_argument("--output", "-o", default=None,
+                          help="Write to file (format inferred from extension: .json or .csv)")
     q_course.set_defaults(func=cmd_query)
 
     q_clos = query_sub.add_parser("clos", help="List CLOs for a course")
     q_clos.add_argument("code", help="Course code")
+    q_clos.add_argument("--output", "-o", default=None,
+                        help="Write to file (format inferred from extension: .json or .csv)")
     q_clos.set_defaults(func=cmd_query)
 
     q_stats = query_sub.add_parser("stats", help="Show database statistics")
+    q_stats.add_argument("--output", "-o", default=None,
+                         help="Write to file (format inferred from extension: .json or .csv)")
     q_stats.set_defaults(func=cmd_query)
 
     q_plo_matrix = query_sub.add_parser("plo-matrix", help="Show CLO-PLO mapping matrix")
     q_plo_matrix.add_argument("--program", "-p", required=True, help="Program code")
+    q_plo_matrix.add_argument("--output", "-o", default=None,
+                              help="Write to file (format inferred from extension: .json or .csv)")
     q_plo_matrix.set_defaults(func=cmd_query)
 
     q_coverage = query_sub.add_parser("coverage", help="Show course-level PLO coverage matrix")
     q_coverage.add_argument("--program", "-p", required=True, help="Program code")
+    q_coverage.add_argument("--output", "-o", default=None,
+                            help="Write to file (format inferred from extension: .json or .csv)")
     q_coverage.set_defaults(func=cmd_query)
 
     q_sql = query_sub.add_parser("sql", help="Execute a read-only SQL query")
     q_sql.add_argument("sql_query", help="SQL query (SELECT only)")
+    q_sql.add_argument("--output", "-o", default=None,
+                       help="Write to file (format inferred from extension: .json or .csv)")
     q_sql.set_defaults(func=cmd_query)
 
     # --- map ---
@@ -1606,35 +1728,6 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"Database path (default: {DEFAULT_DB_PATH})",
     )
     p_gen.set_defaults(func=cmd_generate)
-
-    # --- export ---
-    p_export = subparsers.add_parser("export", help="Export data in CSV or JSON format")
-    p_export.add_argument(
-        "--db", default=DEFAULT_DB_PATH,
-        help=f"Database path (default: {DEFAULT_DB_PATH})",
-    )
-    export_sub = p_export.add_subparsers(dest="export_command", help="Export subcommands")
-
-    e_courses = export_sub.add_parser("courses", help="Export all courses")
-    e_courses.add_argument("--format", default="csv", choices=["csv", "json"],
-                           help="Output format (default: csv)")
-    e_courses.add_argument("--output", "-o", default=None, help="Output file path")
-    e_courses.add_argument("--program", "-p", default=None, help="Filter by program")
-    e_courses.set_defaults(func=cmd_export)
-
-    e_clos = export_sub.add_parser("clos", help="Export CLOs for a course")
-    e_clos.add_argument("code", help="Course code (e.g., 'MATH 101')")
-    e_clos.add_argument("--format", default="csv", choices=["csv", "json"],
-                        help="Output format (default: csv)")
-    e_clos.add_argument("--output", "-o", default=None, help="Output file path")
-    e_clos.set_defaults(func=cmd_export)
-
-    e_matrix = export_sub.add_parser("plo-matrix", help="Export CLO-PLO mapping matrix")
-    e_matrix.add_argument("--program", "-p", required=True, help="Program code")
-    e_matrix.add_argument("--format", default="csv", choices=["csv", "json"],
-                          help="Output format (default: csv)")
-    e_matrix.add_argument("--output", "-o", default=None, help="Output file path")
-    e_matrix.set_defaults(func=cmd_export)
 
     # --- status ---
     p_status = subparsers.add_parser("status", help="Show database status and summary")
