@@ -1324,7 +1324,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run CLO-PLO mapping after ingestion (requires API key)",
     )
     p_run.add_argument(
-        "--force", action="store_true",
+        "--force", "-f", action="store_true",
         help="Re-process files even if already ingested",
     )
     p_run.add_argument(
@@ -1372,7 +1372,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Process subdirectories",
     )
     p_ingest.add_argument(
-        "--force", action="store_true",
+        "--force", "-f", action="store_true",
         help="Re-process files even if already ingested",
     )
     p_ingest.add_argument(
@@ -1452,7 +1452,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Map all unmapped courses in the program",
     )
     p_map.add_argument(
-        "--force", action="store_true",
+        "--force", "-f", action="store_true",
         help="Re-map even if mappings already exist",
     )
     p_map.add_argument(
