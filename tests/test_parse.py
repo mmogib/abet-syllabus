@@ -434,6 +434,44 @@ class TestFormatAParsing:
         assert c.course_code == "MATH 101"
         assert "Calculus" in c.course_title
 
+    @requires_resources
+    def test_coe292_credit_categorization(self):
+        """COE 292 should have engineering_cs=3.0."""
+        f = _DATA_DIR / "COE 292 Course Specifications.pdf"
+        if not f.exists():
+            pytest.skip("COE 292 file not found")
+        c = parse_file(f)
+        assert c.credit_categorization
+        assert c.credit_categorization["engineering_cs"] == 3.0
+        assert c.credit_categorization["math_science"] == 0.0
+
+    @requires_resources
+    def test_bus200_credit_categorization(self):
+        """BUS 200 should have social_sciences_business=45.0."""
+        c = parse_file(_PDF_FILE)
+        assert c.credit_categorization
+        assert c.credit_categorization["social_sciences_business"] == 45.0
+
+    @requires_resources
+    def test_engl101_credit_categorization(self):
+        """ENGL 101 should have general_education=3.0."""
+        f = _DATA_DIR / "ENGL 101 Course Specifications.pdf"
+        if not f.exists():
+            pytest.skip("ENGL 101 file not found")
+        c = parse_file(f)
+        assert c.credit_categorization
+        assert c.credit_categorization["general_education"] == 3.0
+
+    @requires_resources
+    def test_math101_pdf_credit_categorization(self):
+        """MATH 101 PDF should have math_science=4.0."""
+        f = _DATA_DIR / "MATH 101 Course Specifications.pdf"
+        if not f.exists():
+            pytest.skip("MATH 101 PDF not found")
+        c = parse_file(f)
+        assert c.credit_categorization
+        assert c.credit_categorization["math_science"] == 4.0
+
 
 # ===================================================================
 # Format B (DOCX CRF2) parsing tests
@@ -656,6 +694,24 @@ class TestFormatBParsing:
         assert c.course_code == "DATA 399"
         assert c.course_title == "Summer Training"
         assert c.total_credits is not None or c.credit_hours_raw is not None
+
+    @requires_resources
+    def test_math101_docx_credit_categorization(self):
+        """MATH 101 DOCX should have math_science=4.0."""
+        c = parse_file(_DOCX_FILE)
+        assert c.credit_categorization
+        assert c.credit_categorization["math_science"] == 4.0
+        assert c.credit_categorization["engineering_cs"] == 0.0
+
+    @requires_resources
+    def test_data201_credit_categorization(self):
+        """DATA 201 should have math_science=3.0."""
+        f = _DATA_DIR / "DATA 201 Course Specifications.docx"
+        if not f.exists():
+            pytest.skip("DATA 201 file not found")
+        c = parse_file(f)
+        assert c.credit_categorization
+        assert c.credit_categorization["math_science"] == 3.0
 
     @requires_resources
     def test_format_b_code_from_filename(self):

@@ -801,6 +801,120 @@ def _parse_textbooks_from_tables(tables: list[ExtractedTable]) -> list[ParsedTex
 
 
 # ---------------------------------------------------------------------------
+# Credit categorization parsing from tables
+# ---------------------------------------------------------------------------
+
+# Mapping from Format B category labels to DB column names
+_FORMAT_B_CAT_MAP: dict[str, str] = {
+    "engineering": "engineering_cs",
+    "computer science": "engineering_cs",
+    "engineering/computer science": "engineering_cs",
+    "mathematics": "math_science",
+    "science": "math_science",
+    "mathematics/ science": "math_science",
+    "mathematics/science": "math_science",
+    "business": "social_sciences_business",
+    "general education": "general_education",
+    "social sciences": "general_education",
+    "humanities": "humanities",
+    "general education/ social sciences/ humanities": "general_education",
+    "other": "other",
+}
+
+
+def _parse_credit_categorization(tables: list[ExtractedTable]) -> dict[str, float]:
+    """Extract credit categorization from Format B tables.
+
+    Format B stores this in the CLO/content table (typically table 8)
+    in rows like::
+
+        Row N:   "1. Subject Area Credit Hours ..."  (header, merged across all cols)
+        Row N+1: "Engineering/Computer Science" | "Mathematics/ Science" | "Business" |
+                 "General Education/ Social Sciences/ Humanities" | "Other"
+                 (with duplicated cells due to merged columns)
+        Row N+2: "0" | "0" | "3" | "0" | ... (values, many empty = 0)
+
+    Strategy: find the label row, deduplicate the category names,
+    pair each unique category with the first non-empty value in the
+    corresponding value cells, then map to the DB column names.
+    """
+    for table in tables:
+        for i, row in enumerate(table.rows):
+            joined = " ".join(row).lower()
+            if "subject area credit" not in joined:
+                continue
+
+            # Found the header row. The next row should have category labels.
+            if i + 2 >= len(table.rows):
+                continue
+
+            label_row = table.rows[i + 1]
+            value_row = table.rows[i + 2]
+
+            # Check that label_row actually has category labels
+            label_joined = " ".join(label_row).lower()
+            if "engineering" not in label_joined and "mathematics" not in label_joined:
+                continue
+
+            # Deduplicate: walk through label_row, grouping consecutive
+            # identical labels together and summing their values.
+            result: dict[str, float] = {
+                "engineering_cs": 0.0,
+                "math_science": 0.0,
+                "humanities": 0.0,
+                "social_sciences_business": 0.0,
+                "general_education": 0.0,
+                "other": 0.0,
+            }
+
+            # Group cells by category label
+            prev_label = None
+            group_values: list[str] = []
+            groups: list[tuple[str, list[str]]] = []
+
+            for j, label_cell in enumerate(label_row):
+                label = label_cell.strip()
+                val = value_row[j].strip() if j < len(value_row) else ""
+
+                if label != prev_label and prev_label is not None:
+                    groups.append((prev_label, group_values))
+                    group_values = []
+
+                group_values.append(val)
+                prev_label = label
+
+            if prev_label is not None:
+                groups.append((prev_label, group_values))
+
+            # Map each group to a DB column and sum its values
+            for label, vals in groups:
+                db_col = _FORMAT_B_CAT_MAP.get(label.lower())
+                if db_col is None:
+                    # Try partial match
+                    label_lower = label.lower()
+                    for key, col in _FORMAT_B_CAT_MAP.items():
+                        if key in label_lower:
+                            db_col = col
+                            break
+                if db_col is None:
+                    continue
+
+                total = 0.0
+                for v in vals:
+                    try:
+                        total += float(v)
+                    except (ValueError, TypeError):
+                        pass
+                result[db_col] += total
+
+            # Only return if at least one non-zero value
+            if any(v > 0 for v in result.values()):
+                return result
+
+    return {}
+
+
+# ---------------------------------------------------------------------------
 # Credit hours parsing from tables
 # ---------------------------------------------------------------------------
 
@@ -995,5 +1109,10 @@ def parse_format_b(result: ExtractionResult) -> ParsedCourse:
     course.assessments = _parse_assessments_from_tables(tables)
     if course.assessments:
         course.confidence["assessments"] = 0.85
+
+    # --- Credit Categorization ---
+    course.credit_categorization = _parse_credit_categorization(tables)
+    if course.credit_categorization:
+        course.confidence["credit_categorization"] = 0.85
 
     return course

@@ -85,6 +85,11 @@ class ParsedCourse:
     textbooks: list[ParsedTextbook] = field(default_factory=list)
     assessments: list[ParsedAssessment] = field(default_factory=list)
 
+    # Credit categorization
+    # Keys: engineering_cs, math_science, humanities, social_sciences_business,
+    #        general_education, other
+    credit_categorization: dict[str, float] = field(default_factory=dict)
+
     # Metadata
     format_type: str = ""  # "format_a_pdf" / "format_b_crf2"
     source_file: str = ""

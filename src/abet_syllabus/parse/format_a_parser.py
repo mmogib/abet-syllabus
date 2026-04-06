@@ -628,6 +628,58 @@ def _extract_textbook_section(
 
 
 # ---------------------------------------------------------------------------
+# Credit categorization
+# ---------------------------------------------------------------------------
+
+_CREDIT_CAT_RE = re.compile(
+    r"Subject\s+Area\s+Credit\s+Hours\s*:\s*\n"
+    r".*?"                          # category labels line 1 (may span lines)
+    r"([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*\n"  # val1, val2, val3
+    r".*?"                          # category labels line 2 (may span lines)
+    r"([\d.]+)\s+([\d.]+)\s+([\d.]+)",      # val4, val5, val6
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _parse_credit_categorization(raw_text: str) -> dict[str, float]:
+    """Extract credit categorization from Format A raw text.
+
+    The pattern in the raw text (with pdfplumber line breaks) is::
+
+        Subject Area Credit Hours:
+        Engineering / Computer
+        Science Mathematics/Science Humanities
+        <val1> <val2> <val3>
+        Social Sciences and
+        Business General Education Other Subject Areas
+        <val4> <val5> <val6>
+
+    Mapping:
+        val1 = engineering_cs
+        val2 = math_science
+        val3 = humanities
+        val4 = social_sciences_business
+        val5 = general_education
+        val6 = other
+    """
+    m = _CREDIT_CAT_RE.search(raw_text)
+    if not m:
+        return {}
+
+    try:
+        return {
+            "engineering_cs": float(m.group(1)),
+            "math_science": float(m.group(2)),
+            "humanities": float(m.group(3)),
+            "social_sciences_business": float(m.group(4)),
+            "general_education": float(m.group(5)),
+            "other": float(m.group(6)),
+        }
+    except (ValueError, IndexError):
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Main parser
 # ---------------------------------------------------------------------------
 
@@ -737,5 +789,10 @@ def parse_format_a(result: ExtractionResult) -> ParsedCourse:
     course.assessments = _parse_assessments_from_tables(tables)
     if course.assessments:
         course.confidence["assessments"] = 0.8
+
+    # --- Credit Categorization ---
+    course.credit_categorization = _parse_credit_categorization(raw)
+    if course.credit_categorization:
+        course.confidence["credit_categorization"] = 0.9
 
     return course

@@ -300,6 +300,38 @@ class TestIngestFile:
         finally:
             conn.close()
 
+    @requires_resources
+    def test_ingest_stores_credit_categorization_pdf(self, db_path):
+        """Ingesting a Format A PDF should store credit categorization in DB."""
+        ingest_file(_PDF_FILE, db_path)
+        conn = init_db(db_path)
+        try:
+            course = repo.get_course(conn, "BUS 200")
+            row = conn.execute(
+                "SELECT * FROM credit_categorization WHERE course_id = ?",
+                (course.id,),
+            ).fetchone()
+            assert row is not None, "credit_categorization row not found"
+            assert row["social_sciences_business"] == 45.0
+        finally:
+            conn.close()
+
+    @requires_resources
+    def test_ingest_stores_credit_categorization_docx(self, db_path):
+        """Ingesting a Format B DOCX should store credit categorization in DB."""
+        ingest_file(_DOCX_FILE, db_path)
+        conn = init_db(db_path)
+        try:
+            course = repo.get_course(conn, "MATH 101")
+            row = conn.execute(
+                "SELECT * FROM credit_categorization WHERE course_id = ?",
+                (course.id,),
+            ).fetchone()
+            assert row is not None, "credit_categorization row not found"
+            assert row["math_science"] == 4.0
+        finally:
+            conn.close()
+
     def test_ingest_nonexistent_file(self, db_path):
         result = ingest_file("/nonexistent/file.pdf", db_path)
         assert result.status == "error"

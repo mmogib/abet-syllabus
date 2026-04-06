@@ -29,6 +29,7 @@ from abet_syllabus.db.models import (
     CourseClo,
     CourseTextbook,
     CourseTopic,
+    CreditCategorization,
     Program,
 )
 from abet_syllabus.db.schema import init_db
@@ -213,6 +214,19 @@ def ingest_file(
         repo.replace_course_topics(conn, course_id, topics)
         repo.replace_course_textbooks(conn, course_id, textbooks)
         repo.replace_course_assessment(conn, course_id, assessments)
+
+        # Store credit categorization if extracted
+        if parsed.credit_categorization:
+            cc = CreditCategorization(
+                course_id=course_id,
+                engineering_cs=parsed.credit_categorization.get("engineering_cs", 0.0),
+                math_science=parsed.credit_categorization.get("math_science", 0.0),
+                humanities=parsed.credit_categorization.get("humanities", 0.0),
+                social_sciences_business=parsed.credit_categorization.get("social_sciences_business", 0.0),
+                general_education=parsed.credit_categorization.get("general_education", 0.0),
+                other=parsed.credit_categorization.get("other", 0.0),
+            )
+            repo.upsert_credit_categorization(conn, cc)
 
         # Link to program if specified
         if program:
