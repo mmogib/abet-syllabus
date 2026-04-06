@@ -73,11 +73,18 @@ abet-syllabus map <course> -p <prog>                     # AI CLO-PLO mapping
 abet-syllabus map <course> -p <prog> --model <model>     # use specific AI model
 abet-syllabus generate <course> -t <term> [--no-pdf]     # produce DOCX/PDF output
 abet-syllabus export courses|clos|plo-matrix --format csv|json
+abet-syllabus plo-alias K1 SO1 -p <prog>                 # manage PLO code aliases
+abet-syllabus plo-alias --list -p <prog>                 # list aliases
 abet-syllabus status                                     # database overview
 abet-syllabus validate                                   # data quality check
 ```
 
 Global flags: `--db`, `--verbose`/`-v`, `--quiet`/`-q`, `--config`, `--force`/`-f`
+
+Notes:
+- `--force`/`-f` on ingest preserves existing CLO-PLO mappings
+- PLO aliases map between naming conventions (K1/S1 → SO1/SO2)
+- Interactive prompts activate when stdin is a terminal
 
 ## Domain Concepts
 
