@@ -20,16 +20,21 @@ from .provider import MappingProvider, MappingResult
 logger = logging.getLogger(__name__)
 
 
-def get_default_provider(provider_name: str | None = None) -> MappingProvider:
+def get_default_provider(
+    provider_name: str | None = None,
+    model: str | None = None,
+) -> MappingProvider:
     """Get a mapping provider by name, or auto-detect from available API keys.
 
     Provider resolution order when *provider_name* is ``None``:
-    1. If ``OPENROUTER_API_KEY`` is set → OpenRouterProvider
-    2. If ``ANTHROPIC_API_KEY`` is set → AnthropicProvider
+    1. If ``OPENROUTER_API_KEY`` is set -> OpenRouterProvider
+    2. If ``ANTHROPIC_API_KEY`` is set -> AnthropicProvider
     3. Raise ValueError
 
     Args:
         provider_name: ``"anthropic"``, ``"openrouter"``, or ``None`` for auto.
+        model: Optional model identifier override.  When ``None`` the
+            provider's default model is used.
 
     Returns:
         An initialized MappingProvider.
@@ -39,22 +44,29 @@ def get_default_provider(provider_name: str | None = None) -> MappingProvider:
     """
     import os
 
+    def _kwargs() -> dict:
+        """Build keyword arguments for provider constructors."""
+        kw: dict = {}
+        if model is not None:
+            kw["model"] = model
+        return kw
+
     if provider_name == "anthropic":
         from .anthropic_provider import AnthropicProvider
-        return AnthropicProvider()
+        return AnthropicProvider(**_kwargs())
 
     if provider_name == "openrouter":
         from .openrouter_provider import OpenRouterProvider
-        return OpenRouterProvider()
+        return OpenRouterProvider(**_kwargs())
 
     # Auto-detect
     if os.environ.get("OPENROUTER_API_KEY"):
         from .openrouter_provider import OpenRouterProvider
-        return OpenRouterProvider()
+        return OpenRouterProvider(**_kwargs())
 
     if os.environ.get("ANTHROPIC_API_KEY"):
         from .anthropic_provider import AnthropicProvider
-        return AnthropicProvider()
+        return AnthropicProvider(**_kwargs())
 
     raise ValueError(
         "No API key found. Set OPENROUTER_API_KEY or ANTHROPIC_API_KEY "

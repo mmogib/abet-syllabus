@@ -56,9 +56,10 @@ class SyllabusData:
     catalog_description: str = ""
     prerequisites: str = ""
     corequisites: str = ""
-    course_type: str = ""         # "Required" / "Elective" / etc.
+    course_type: str = ""         # "Required" / "Selected Elective" / "Elective" / ""
     instructor_name: str = ""     # may be empty
     term_code: str = ""           # "T252"
+    weekly_contact_hours: float = 0.0  # lecture + lab hours per week
 
     clos: list[SyllabusCLO] = field(default_factory=list)
     topics: list[SyllabusTopic] = field(default_factory=list)
@@ -71,6 +72,31 @@ class SyllabusData:
 
     # Credit categorization
     credit_categories: dict[str, float] = field(default_factory=dict)
+
+
+def normalize_course_type(raw: str) -> str:
+    """Normalize course type/designation to one of the canonical values.
+
+    Returns one of: "Required", "Selected Elective", "Elective", or "".
+    Handles variations like "University Required", "Selected elective",
+    "Compulsory", etc.
+    """
+    if not raw:
+        return ""
+    lower = raw.strip().lower()
+
+    # "Selected Elective" must be checked before plain "Elective"
+    if "selected" in lower and "elective" in lower:
+        return "Selected Elective"
+    if "elective" in lower:
+        return "Elective"
+    # Various forms of "required": "Required", "University Required",
+    # "Compulsory", "Core", "Mandatory"
+    if any(kw in lower for kw in ("required", "compulsory", "core", "mandatory")):
+        return "Required"
+
+    # Fallback: return empty if unrecognized
+    return ""
 
 
 def _renumber_clos(db_clos: list) -> list[SyllabusCLO]:
@@ -219,6 +245,12 @@ def _assemble_from_conn(
     if not instr_name and term:
         instr_name = _get_instructor(conn, course_id, term)
 
+    # Normalize course type to canonical form
+    normalized_type = normalize_course_type(course.course_type)
+
+    # Calculate weekly contact hours from lecture + lab credits
+    weekly_hours = float(course.lecture_credits + course.lab_credits)
+
     data = SyllabusData(
         course_code=course.course_code,
         course_title=course.course_title,
@@ -231,9 +263,10 @@ def _assemble_from_conn(
         catalog_description=course.catalog_description,
         prerequisites=course.prerequisites,
         corequisites=course.corequisites,
-        course_type=course.course_type,
+        course_type=normalized_type,
         instructor_name=instr_name,
         term_code=term or "",
+        weekly_contact_hours=weekly_hours,
         clos=clos,
         topics=topics,
         textbooks=textbooks,

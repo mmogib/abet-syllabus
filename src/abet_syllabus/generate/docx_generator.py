@@ -131,19 +131,22 @@ def _fill_credits(table, data: SyllabusData) -> None:
     _set_cell_text(table.rows[2].cells[1], credit_detail)
 
     # Row 4: credit categorization values
+    # NOTE: Credit categorization is program-specific data that cannot be
+    # auto-extracted from most input files. If no categorization data exists
+    # in the database, we leave the template cells as-is so the user can
+    # fill them in manually.
     cats = data.credit_categories
-    math_sci = cats.get("math_science", 0)
-    eng = cats.get("engineering_cs", 0)
-    other_val = cats.get("other", 0)
-    # Also aggregate other categories into "other"
-    other_total = (
-        other_val
-        + cats.get("humanities", 0)
-        + cats.get("social_sciences_business", 0)
-        + cats.get("general_education", 0)
-    )
-
     if cats:
+        math_sci = cats.get("math_science", 0)
+        eng = cats.get("engineering_cs", 0)
+        other_val = cats.get("other", 0)
+        # Also aggregate other categories into "other"
+        other_total = (
+            other_val
+            + cats.get("humanities", 0)
+            + cats.get("social_sciences_business", 0)
+            + cats.get("general_education", 0)
+        )
         _set_cell_text(table.rows[4].cells[1], str(math_sci) if math_sci else "")
         _set_cell_text(table.rows[4].cells[2], str(eng) if eng else "")
         _set_cell_text(table.rows[4].cells[3], str(other_total) if other_total else "")
@@ -203,14 +206,12 @@ def _fill_specific_info(table, data: SyllabusData) -> None:
     _set_cell_text(table.rows[2].cells[2], prereq_text)
 
     # Designation checkmarks (row 4)
-    course_type_lower = data.course_type.lower()
-    is_required = "required" in course_type_lower and "elective" not in course_type_lower
-    is_selected_elective = "selected" in course_type_lower and "elective" in course_type_lower
-    is_elective = "elective" in course_type_lower and "selected" not in course_type_lower
-
-    _set_cell_text(table.rows[4].cells[2], "\u221A" if is_required else "")
-    _set_cell_text(table.rows[4].cells[3], "\u221A" if is_selected_elective else "")
-    _set_cell_text(table.rows[4].cells[4], "\u221A" if is_elective else "")
+    # course_type is already normalized by the assembler to one of:
+    # "Required", "Selected Elective", "Elective", or ""
+    checkmark = "\u2713"  # Unicode checkmark U+2713
+    _set_cell_text(table.rows[4].cells[2], checkmark if data.course_type == "Required" else "")
+    _set_cell_text(table.rows[4].cells[3], checkmark if data.course_type == "Selected Elective" else "")
+    _set_cell_text(table.rows[4].cells[4], checkmark if data.course_type == "Elective" else "")
 
 
 def _fill_clo_so_table(table, data: SyllabusData, doc: Document) -> None:
@@ -287,11 +288,25 @@ def _fill_topics(table, data: SyllabusData) -> None:
             _set_cell_text(table.rows[1].cells[0], "")
         return
 
-    # Format topics as a numbered list with hours
+    # Format topics as a numbered list with weeks
+    # weeks = contact_hours / weekly_contact_hours
+    # If weekly_contact_hours is unknown (0), fall back to showing hours
+    weekly = data.weekly_contact_hours
     lines = []
     for topic in data.topics:
-        hours_str = f" ({topic.contact_hours:.0f}h)" if topic.contact_hours else ""
-        lines.append(f"{topic.number}. {topic.title}{hours_str}")
+        if topic.contact_hours:
+            if weekly > 0:
+                weeks = topic.contact_hours / weekly
+                # Display as integer if whole number, else one decimal
+                if weeks == int(weeks):
+                    suffix = f" ({int(weeks)})"
+                else:
+                    suffix = f" ({weeks:.1f})"
+            else:
+                suffix = f" ({topic.contact_hours:.0f}h)"
+        else:
+            suffix = ""
+        lines.append(f"{topic.number}. {topic.title}{suffix}")
 
     topic_text = "\n".join(lines)
 

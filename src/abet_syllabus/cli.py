@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from abet_syllabus import __version__
+from abet_syllabus.parse.normalize import normalize_course_code
 
 logger = logging.getLogger(__name__)
 
@@ -291,7 +292,7 @@ def _query_course_detail(conn, args: argparse.Namespace) -> int:
     """Show detailed information for a specific course."""
     from abet_syllabus.db import repository as repo
 
-    code = args.code.upper()
+    code = normalize_course_code(args.code)
     course = repo.get_course(conn, code)
     if course is None:
         logger.error("Course not found: %s", code)
@@ -363,7 +364,7 @@ def _query_clos(conn, args: argparse.Namespace) -> int:
     """List CLOs for a specific course."""
     from abet_syllabus.db import repository as repo
 
-    code = args.code.upper()
+    code = normalize_course_code(args.code)
     course = repo.get_course(conn, code)
     if course is None:
         logger.error("Course not found: %s", code)
@@ -465,6 +466,45 @@ def _query_plo_matrix(conn, args: argparse.Namespace) -> int:
     return 0
 
 
+def _check_plos_for_mapping(db_path: str, program: str) -> bool:
+    """Check that PLO definitions exist for the given program.
+
+    If PLOs are missing, prompts the user (interactive) or logs an error
+    (non-interactive).
+
+    Returns:
+        True if PLOs are available (or were just loaded), False otherwise.
+    """
+    from abet_syllabus.db import repository as repo
+    from abet_syllabus.db.schema import init_db
+
+    conn = init_db(db_path)
+    try:
+        plos = repo.get_plos_for_program(conn, program)
+    finally:
+        conn.close()
+
+    if plos:
+        return True
+
+    interactive = sys.stdin.isatty()
+    if interactive:
+        print(f"No PLO definitions found for program '{program}'.")
+        plo_path = input("Enter path to PLO CSV file (or press Enter to abort): ").strip()
+        if plo_path and Path(plo_path).exists():
+            from abet_syllabus.ingest import ingest_plos
+            count = ingest_plos(plo_path, db_path)
+            print(f"Loaded {count} PLO definitions.")
+            return True
+
+    logger.error(
+        "No PLO definitions for program '%s'. "
+        "Load PLOs first with: abet-syllabus ingest-plos <csv>",
+        program,
+    )
+    return False
+
+
 def cmd_map(args: argparse.Namespace) -> int:
     """Run CLO-PLO mapping for a course or program."""
     from abet_syllabus.mapping import (
@@ -483,10 +523,11 @@ def cmd_map(args: argparse.Namespace) -> int:
     do_approve = getattr(args, "approve", False)
     map_all = getattr(args, "map_all", False)
     provider_name = getattr(args, "provider", None)
+    model_name = getattr(args, "model", None)
 
     # --- Review mode ---
     if do_review and not map_all:
-        course_code = args.course
+        course_code = normalize_course_code(args.course) if args.course else None
         if not course_code:
             logger.error("Course code required for --review")
             return 1
@@ -516,7 +557,7 @@ def cmd_map(args: argparse.Namespace) -> int:
 
     # --- Approve mode ---
     if do_approve and not map_all:
-        course_code = args.course
+        course_code = normalize_course_code(args.course) if args.course else None
         if not course_code:
             logger.error("Course code required for --approve")
             return 1
@@ -527,10 +568,15 @@ def cmd_map(args: argparse.Namespace) -> int:
             print(f"No pending AI-suggested mappings to approve for {course_code} in {program}.")
         return 0
 
+    # --- PLO check before mapping ---
+    if not do_review and not do_approve:
+        if not _check_plos_for_mapping(db_path, program):
+            return 1
+
     # --- Map all courses in a program ---
     if map_all:
         try:
-            provider = get_default_provider(provider_name)
+            provider = get_default_provider(provider_name, model=model_name)
             all_results = map_program(db_path, program, provider=provider, force=force)
         except ValueError as exc:
             logger.error("Mapping failed: %s", exc)
@@ -556,13 +602,13 @@ def cmd_map(args: argparse.Namespace) -> int:
         return 0
 
     # --- Map a single course ---
-    course_code = args.course
+    course_code = normalize_course_code(args.course) if args.course else None
     if not course_code:
         logger.error("Course code required (or use --all)")
         return 1
 
     try:
-        provider = get_default_provider(provider_name)
+        provider = get_default_provider(provider_name, model=model_name)
         results = map_course(db_path, course_code, program, provider=provider, force=force)
     except ValueError as exc:
         logger.error("Mapping failed: %s", exc)
@@ -625,9 +671,10 @@ def cmd_generate(args: argparse.Namespace) -> int:
             logger.error("Provide a course code or use --all")
             return 1
 
+        course_code = normalize_course_code(args.course)
         result = generate_syllabus(
             db_path=db_path,
-            course_code=args.course,
+            course_code=course_code,
             program_code=args.program,
             term=args.term,
             instructor=instructor,
@@ -658,20 +705,145 @@ def cmd_generate(args: argparse.Namespace) -> int:
     return 1 if errors and not success else 0
 
 
+def _confirm_or_fail(prompt_msg: str, default_yes: bool = True) -> bool:
+    """Prompt the user for confirmation if stdin is a tty.
+
+    Returns True if confirmed. Raises SystemExit with a helpful message
+    if stdin is not a tty (non-interactive mode).
+    """
+    if not sys.stdin.isatty():
+        return False
+
+    suffix = " [Y/n]: " if default_yes else " [y/N]: "
+    try:
+        answer = input(prompt_msg + suffix).strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return False
+
+    if not answer:
+        return default_yes
+    return answer in ("y", "yes")
+
+
+def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, str | None, str | None]:
+    """Resolve smart defaults for the 'run' command.
+
+    Returns (path, program, term, output_dir) with defaults applied.
+    Prompts interactively when stdin is a tty and info is missing.
+    """
+    from abet_syllabus.term import get_current_term
+
+    interactive = sys.stdin.isatty()
+
+    # --- Resolve input path ---
+    path_arg = getattr(args, "path", None)
+    if path_arg:
+        path = Path(path_arg)
+    else:
+        # Look for ./input/ in cwd
+        default_input = Path.cwd() / "input"
+        if default_input.is_dir():
+            if interactive:
+                if _confirm_or_fail(f'No input path specified. Use ./input/?'):
+                    path = default_input
+                else:
+                    logger.error("No input path specified. Use: abet-syllabus run <path>")
+                    sys.exit(1)
+            else:
+                logger.error("No input path specified. Use: abet-syllabus run <path>")
+                sys.exit(1)
+        else:
+            logger.error("No input path specified and ./input/ not found. Use: abet-syllabus run <path>")
+            sys.exit(1)
+
+    # --- Resolve program ---
+    program = args.program
+    if not program:
+        # Try to infer from subfolder name (e.g. input/math/ -> "MATH")
+        detected = _detect_program_from_path(path)
+        if detected:
+            if interactive:
+                if _confirm_or_fail(f'Program not specified. Detected "{detected}" from folder name. Use {detected}?'):
+                    program = detected
+                else:
+                    logger.error("Program not specified. Use: abet-syllabus run <path> -p <program>")
+                    sys.exit(1)
+            # In non-interactive mode, don't auto-infer -- leave program as None
+
+    # --- Resolve term ---
+    term = args.term
+    if not term:
+        current_term = get_current_term()
+        if interactive:
+            if _confirm_or_fail(f'No term specified. Current term is {current_term}. Use {current_term}?'):
+                term = current_term
+            else:
+                logger.error("Term not specified. Use: abet-syllabus run <path> -t <term>")
+                sys.exit(1)
+        # In non-interactive mode, leave term as None (optional)
+
+    # --- Resolve output ---
+    output_dir = args.output
+    if not output_dir:
+        output_dir = str(Path.cwd() / "output")
+
+    return path, program, term, output_dir
+
+
+def _detect_program_from_path(path: Path) -> str | None:
+    """Try to detect a program code from a directory path.
+
+    Strategy:
+    1. If path is a file, check the parent directory name.
+    2. If path is a directory, first check subdirectories for a single
+       program-named folder.
+    3. Failing that, check if the directory name itself looks like a program code.
+
+    Skips generic names like "input", "output", "data" (>= 4 chars) when
+    subdirectories are present to avoid false positives.
+    """
+    if path.is_file():
+        # Check parent dir
+        parent_name = path.parent.name.upper()
+        if parent_name and parent_name.isalpha() and len(parent_name) <= 6:
+            return parent_name
+        return None
+
+    # Check for subdirectories that look like program codes
+    try:
+        subdirs = [
+            d for d in path.iterdir()
+            if d.is_dir() and d.name.upper().isalpha() and len(d.name) <= 6
+        ]
+    except OSError:
+        subdirs = []
+
+    if len(subdirs) == 1:
+        return subdirs[0].name.upper()
+
+    # If no single subdir match, check the directory name itself
+    if not subdirs:
+        dir_name = path.name.upper()
+        if dir_name and dir_name.isalpha() and len(dir_name) <= 6:
+            return dir_name
+
+    return None
+
+
 def cmd_run(args: argparse.Namespace) -> int:
     """Run the full pipeline: ingest files then generate syllabi."""
     from abet_syllabus.ingest import ingest_file
     from abet_syllabus.generate import generate_syllabus
 
-    path = Path(args.path)
+    # Resolve smart defaults
+    path, program, term, output_dir = _resolve_run_defaults(args)
+
     db_path = args.db
-    program = args.program
-    term = args.term
-    output_dir = args.output
     template = getattr(args, "template", None)
     no_pdf = getattr(args, "no_pdf", False)
     gen_pdf = not no_pdf
     instructor = getattr(args, "instructor", None)
+    do_map = getattr(args, "map", False)
 
     if not path.exists():
         logger.error("Path not found: %s", path)
@@ -714,6 +886,11 @@ def cmd_run(args: argparse.Namespace) -> int:
         print("No courses to generate syllabi for.")
         return 1 if error_count else 0
 
+    # --- Step 1.5: Mapping (optional, when --map is set) ---
+    if do_map and program:
+        print(f"\n=== Step 1.5: CLO-PLO Mapping ===\n")
+        _run_mapping_step(db_path, course_codes, program)
+
     # --- Step 2: Generate ---
     print(f"\n=== Step 2: Generating {len(course_codes)} syllabus document(s) ===\n")
 
@@ -755,6 +932,60 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 1 if gen_errors and not gen_success else 0
 
 
+def _run_mapping_step(db_path: str, course_codes: list[str], program: str) -> None:
+    """Run CLO-PLO mapping for courses when --map is set.
+
+    Warns and skips if no API key is available or PLOs are missing.
+    """
+    from abet_syllabus.db import repository as repo
+    from abet_syllabus.db.schema import init_db
+    from abet_syllabus.mapping.engine import get_default_provider, map_course
+
+    # Check if PLOs exist for this program
+    conn = init_db(db_path)
+    try:
+        plos = repo.get_plos_for_program(conn, program)
+    finally:
+        conn.close()
+
+    if not plos:
+        interactive = sys.stdin.isatty()
+        if interactive:
+            print(f"No PLO definitions found for program '{program}'.")
+            plo_path = input("Enter path to PLO CSV file (or press Enter to skip mapping): ").strip()
+            if plo_path and Path(plo_path).exists():
+                from abet_syllabus.ingest import ingest_plos
+                count = ingest_plos(plo_path, db_path)
+                print(f"Loaded {count} PLO definitions.")
+            else:
+                print("Skipping mapping step (no PLOs).")
+                return
+        else:
+            print(f"Warning: No PLO definitions for '{program}'. Skipping mapping.")
+            print(f"Load PLOs first with: abet-syllabus ingest-plos <csv>")
+            return
+
+    # Get provider
+    try:
+        provider = get_default_provider()
+    except ValueError:
+        print("Warning: No API key found (OPENROUTER_API_KEY or ANTHROPIC_API_KEY).")
+        print("Skipping mapping step. Set an API key to enable CLO-PLO mapping.")
+        return
+
+    total = len(course_codes)
+    for i, code in enumerate(course_codes, 1):
+        print(f"[{i}/{total}] {code}... ", end="", flush=True)
+        try:
+            results = map_course(db_path, code, program, provider=provider)
+            print(f"{len(results)} mappings")
+        except ValueError as exc:
+            print(f"skipped ({exc})")
+        except RuntimeError as exc:
+            print(f"error ({exc})")
+            logger.warning("Mapping failed for %s: %s", code, exc)
+
+
 def cmd_export(args: argparse.Namespace) -> int:
     """Export data from the database in CSV or JSON format."""
     from abet_syllabus.export import export_courses, export_clos, export_plo_matrix
@@ -775,7 +1006,7 @@ def cmd_export(args: argparse.Namespace) -> int:
             program = getattr(args, "program", None)
             content = export_courses(db_path, fmt=fmt, output=output, program=program)
         elif export_cmd == "clos":
-            course_code = args.code
+            course_code = normalize_course_code(args.code)
             content = export_clos(db_path, course_code, fmt=fmt, output=output)
         elif export_cmd == "plo-matrix":
             program = getattr(args, "program", None)
@@ -945,7 +1176,8 @@ def build_parser() -> argparse.ArgumentParser:
         "run",
         help="Full pipeline: ingest course files then generate ABET syllabi",
     )
-    p_run.add_argument("path", help="Path to a file or directory to process")
+    p_run.add_argument("path", nargs="?", default=None,
+                        help="Path to a file or directory to process (defaults to ./input/)")
     p_run.add_argument(
         "--program", "-p", default=None,
         help="Program code (e.g., MATH, AS, DATA)",
@@ -953,7 +1185,7 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--term", "-t", default=None, help="Term code (e.g., T252)")
     p_run.add_argument(
         "--output", "-o", default=None,
-        help="Output directory for generated syllabi",
+        help="Output directory for generated syllabi (default: ./output/)",
     )
     p_run.add_argument(
         "--recursive", "-r", action="store_true",
@@ -970,6 +1202,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--instructor", default=None,
         help="Instructor name to include",
+    )
+    p_run.add_argument(
+        "--map", action="store_true",
+        help="Run CLO-PLO mapping after ingestion (requires API key)",
     )
     p_run.add_argument(
         "--db", default=DEFAULT_DB_PATH,
@@ -1090,6 +1326,11 @@ def build_parser() -> argparse.ArgumentParser:
     p_map.add_argument(
         "--provider", default=None, choices=["anthropic", "openrouter"],
         help="AI provider (default: auto-detect from API keys)",
+    )
+    p_map.add_argument(
+        "--model", default=None,
+        help="AI model identifier (e.g., 'anthropic/claude-sonnet-4'). "
+             "Defaults to provider's default model.",
     )
     p_map.set_defaults(func=cmd_map)
 
