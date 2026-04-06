@@ -1582,6 +1582,16 @@ def main(argv: list[str] | None = None) -> int:
     if hasattr(args, "db") and args.db == DEFAULT_DB_PATH:
         args.db = config.db_path
 
+    # Normalize user input globally before dispatching
+    # Program code: uppercase (math → MATH)
+    if hasattr(args, "program") and args.program:
+        args.program = args.program.upper()
+    # Course code: normalize (math101 → MATH 101)
+    if hasattr(args, "course") and args.course:
+        args.course = normalize_course_code(args.course)
+    if hasattr(args, "code") and args.code:
+        args.code = normalize_course_code(args.code)
+
     if hasattr(args, "func"):
         return args.func(args)
 
