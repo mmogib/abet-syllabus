@@ -189,16 +189,17 @@ def _find_default_template() -> Path:
 
     Searches in order:
     1. resources/templates/ABETSyllabusTemplate.docx (relative to cwd)
-    2. Relative to the package installation
+    2. Bundled inside the installed package
     """
+    template_name = "ABETSyllabusTemplate.docx"
+
     # Try relative to cwd
-    cwd_template = Path("resources/templates/ABETSyllabusTemplate.docx")
+    cwd_template = Path("resources/templates") / template_name
     if cwd_template.exists():
         return cwd_template
 
-    # Try relative to the package (src/abet_syllabus/../../resources/...)
-    pkg_dir = Path(__file__).resolve().parent.parent.parent.parent
-    pkg_template = pkg_dir / "resources" / "templates" / "ABETSyllabusTemplate.docx"
+    # Try bundled template inside the package
+    pkg_template = Path(__file__).resolve().parent.parent / "templates" / template_name
     if pkg_template.exists():
         return pkg_template
 

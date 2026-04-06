@@ -4,17 +4,16 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "abet-syllabus"
-version = "1.0.0"
+version = "1.0.1"
 description = "CLI tool to generate ABET-compliant course syllabi from university course specifications"
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 keywords = ["abet", "syllabus", "accreditation", "education"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Environment :: Console",
     "Intended Audience :: Education",
-    "License :: OSI Approved :: MIT License",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
@@ -44,6 +43,9 @@ abet-syllabus = "abet_syllabus.cli:main_cli"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+abet_syllabus = ["templates/*.docx"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
