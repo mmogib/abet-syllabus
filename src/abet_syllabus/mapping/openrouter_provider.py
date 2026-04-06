@@ -22,7 +22,7 @@ from .provider import MappingProvider, MappingResult
 logger = logging.getLogger(__name__)
 
 # Default model on OpenRouter (cost-effective Claude)
-DEFAULT_MODEL = "anthropic/claude-sonnet-4"
+DEFAULT_MODEL = "qwen/qwen3-235b-a22b:free"
 OPENROUTER_API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
