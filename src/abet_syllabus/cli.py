@@ -746,17 +746,22 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
         default_input = Path.cwd() / "input"
         if default_input.is_dir():
             if interactive:
-                if _confirm_or_fail(f'No input path specified. Use ./input/?'):
-                    path = default_input
+                if not _confirm_or_fail(f"No input path specified. Use ./input/?"):
+                    logger.error("Cancelled.")
+                    sys.exit(1)
+            print(f"Using input path: {default_input}")
+            path = default_input
+        else:
+            if interactive:
+                user_path = input("Input path not found. Enter path to course files: ").strip()
+                if user_path:
+                    path = Path(user_path)
                 else:
                     logger.error("No input path specified. Use: abet-syllabus run <path>")
                     sys.exit(1)
             else:
-                logger.error("No input path specified. Use: abet-syllabus run <path>")
+                logger.error("No input path specified and ./input/ not found. Use: abet-syllabus run <path>")
                 sys.exit(1)
-        else:
-            logger.error("No input path specified and ./input/ not found. Use: abet-syllabus run <path>")
-            sys.exit(1)
 
     # --- Resolve program ---
     program = args.program
@@ -765,24 +770,32 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
         detected = _detect_program_from_path(path)
         if detected:
             if interactive:
-                if _confirm_or_fail(f'Program not specified. Detected "{detected}" from folder name. Use {detected}?'):
-                    program = detected
+                if not _confirm_or_fail(f'Detected program "{detected}" from folder name. Use {detected}?'):
+                    user_prog = input("Enter program code: ").strip().upper()
+                    program = user_prog if user_prog else None
                 else:
-                    logger.error("Program not specified. Use: abet-syllabus run <path> -p <program>")
-                    sys.exit(1)
-            # In non-interactive mode, don't auto-infer -- leave program as None
+                    program = detected
+            else:
+                program = detected
+                print(f"Auto-detected program: {program}")
+
+        elif interactive:
+            user_prog = input("Program code not detected. Enter program code (or press Enter to skip): ").strip().upper()
+            program = user_prog if user_prog else None
 
     # --- Resolve term ---
     term = args.term
     if not term:
         current_term = get_current_term()
         if interactive:
-            if _confirm_or_fail(f'No term specified. Current term is {current_term}. Use {current_term}?'):
-                term = current_term
+            if not _confirm_or_fail(f"No term specified. Current term is {current_term}. Use {current_term}?"):
+                user_term = input("Enter term code (e.g. T252): ").strip().upper()
+                term = user_term if user_term else None
             else:
-                logger.error("Term not specified. Use: abet-syllabus run <path> -t <term>")
-                sys.exit(1)
-        # In non-interactive mode, leave term as None (optional)
+                term = current_term
+        else:
+            term = current_term
+            print(f"Using current term: {term}")
 
     # --- Resolve output ---
     output_dir = args.output
