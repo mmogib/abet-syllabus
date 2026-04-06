@@ -45,7 +45,7 @@ abet-syllabus/
       db/                     # SQLite schema + persistence
       mapping/                # AI-powered CLO-PLO mapping
       generate/               # DOCX + PDF output generation
-      export/                 # CSV/JSON data export
+      export/                 # CSV/JSON export helpers (used by query -o)
       ingest/                 # ingestion pipeline (extract → parse → store)
   tests/                      # pytest test suite
   pyproject.toml              # package metadata, dependencies, entry_points
@@ -53,7 +53,12 @@ abet-syllabus/
   CLAUDE.md                   # this file
 ```
 
-CLI entry point: `abet-syllabus` (installed via `pip install -e .`)
+CLI entry point: `abet-syllabus` (installed via `pip install -e .` or `pip install abet-syllabus`)
+
+Published on PyPI: https://pypi.org/project/abet-syllabus/
+GitHub: https://github.com/mmogib/abet-syllabus
+
+Current version: 1.2.0
 
 ## CLI Commands
 
