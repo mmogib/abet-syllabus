@@ -109,47 +109,48 @@ class TestCourseCodeNormalization:
 # ---------------------------------------------------------------------------
 
 class TestSmartDefaults:
-    """Test _resolve_run_defaults and _detect_program_from_path."""
+    """Test _detect_programs_from_path."""
 
     def test_detect_program_from_dir_name(self, tmp_path):
         """Directory named 'math' should detect as MATH."""
-        from abet_syllabus.cli import _detect_program_from_path
+        from abet_syllabus.cli import _detect_programs_from_path
         math_dir = tmp_path / "math"
         math_dir.mkdir()
-        assert _detect_program_from_path(math_dir) == "MATH"
+        assert _detect_programs_from_path(math_dir) == ["MATH"]
 
     def test_detect_program_from_single_subdir(self, tmp_path):
         """Directory with a single alpha subdir should detect it."""
-        from abet_syllabus.cli import _detect_program_from_path
+        from abet_syllabus.cli import _detect_programs_from_path
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         (input_dir / "data").mkdir()
-        assert _detect_program_from_path(input_dir) == "DATA"
+        assert _detect_programs_from_path(input_dir) == ["DATA"]
 
-    def test_detect_program_ambiguous(self, tmp_path):
-        """Multiple subdirs should not auto-detect."""
-        from abet_syllabus.cli import _detect_program_from_path
+    def test_detect_multiple_programs(self, tmp_path):
+        """Multiple subdirs should return all as candidates."""
+        from abet_syllabus.cli import _detect_programs_from_path
         input_dir = tmp_path / "input"
         input_dir.mkdir()
         (input_dir / "math").mkdir()
         (input_dir / "data").mkdir()
-        assert _detect_program_from_path(input_dir) is None
+        assert _detect_programs_from_path(input_dir) == ["DATA", "MATH"]
 
     def test_detect_program_from_file_parent(self, tmp_path):
         """File inside a program-named dir should detect the parent."""
-        from abet_syllabus.cli import _detect_program_from_path
-        math_dir = tmp_path / "as"
-        math_dir.mkdir()
-        file = math_dir / "course.pdf"
+        from abet_syllabus.cli import _detect_programs_from_path
+        as_dir = tmp_path / "as"
+        as_dir.mkdir()
+        file = as_dir / "course.pdf"
         file.touch()
-        assert _detect_program_from_path(file) == "AS"
+        assert _detect_programs_from_path(file) == ["AS"]
 
-    def test_detect_program_long_name_ignored(self, tmp_path):
-        """Directory names longer than 6 chars should not be detected as programs."""
-        from abet_syllabus.cli import _detect_program_from_path
-        long_dir = tmp_path / "resources"
-        long_dir.mkdir()
-        assert _detect_program_from_path(long_dir) is None
+    def test_excludes_known_non_program_dirs(self, tmp_path):
+        """Known dirs like 'resources', 'plos', 'templates' should be excluded."""
+        from abet_syllabus.cli import _detect_programs_from_path
+        for name in ["resources", "plos", "templates", "output"]:
+            d = tmp_path / name
+            d.mkdir(exist_ok=True)
+            assert _detect_programs_from_path(d) == [], f"{name} should be excluded"
 
 
 # ---------------------------------------------------------------------------

@@ -766,11 +766,11 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
     # --- Resolve program ---
     program = args.program
     if not program:
-        # Try to infer from subfolder name (e.g. input/math/ -> "MATH")
-        detected = _detect_program_from_path(path)
-        if detected:
+        candidates = _detect_programs_from_path(path)
+        if len(candidates) == 1:
+            detected = candidates[0]
             if interactive:
-                if not _confirm_or_fail(f'Detected program "{detected}" from folder name. Use {detected}?'):
+                if not _confirm_or_fail(f'Detected program "{detected}". Use {detected}?'):
                     user_prog = input("Enter program code: ").strip().upper()
                     program = user_prog if user_prog else None
                 else:
@@ -778,7 +778,15 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
             else:
                 program = detected
                 print(f"Auto-detected program: {program}")
-
+        elif len(candidates) > 1 and interactive:
+            print("Multiple programs detected:")
+            for i, c in enumerate(candidates, 1):
+                print(f"  {i}) {c}")
+            choice = input(f"Choose program [1-{len(candidates)}] or enter code: ").strip()
+            if choice.isdigit() and 1 <= int(choice) <= len(candidates):
+                program = candidates[int(choice) - 1]
+            elif choice:
+                program = choice.upper()
         elif interactive:
             user_prog = input("Program code not detected. Enter program code (or press Enter to skip): ").strip().upper()
             program = user_prog if user_prog else None
@@ -789,8 +797,13 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
         current_term = get_current_term()
         if interactive:
             if not _confirm_or_fail(f"No term specified. Current term is {current_term}. Use {current_term}?"):
-                user_term = input("Enter term code (e.g. T252): ").strip().upper()
-                term = user_term if user_term else None
+                user_term = input("Enter term code (e.g. T252): ").strip()
+                if user_term:
+                    # Auto-prepend T if user typed just digits
+                    user_term = user_term.upper()
+                    if user_term.isdigit():
+                        user_term = f"T{user_term}"
+                    term = user_term
             else:
                 term = current_term
         else:
@@ -805,44 +818,50 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
     return path, program, term, output_dir
 
 
-def _detect_program_from_path(path: Path) -> str | None:
-    """Try to detect a program code from a directory path.
+_NON_PROGRAM_DIRS = {
+    "input", "output", "resources", "templates", "plos", "notes",
+    "src", "tests", "docs", "bin", "lib", "build", "dist", "tmp",
+    "course-descriptions", "course_descriptions",
+}
 
-    Strategy:
-    1. If path is a file, check the parent directory name.
-    2. If path is a directory, first check subdirectories for a single
-       program-named folder.
-    3. Failing that, check if the directory name itself looks like a program code.
 
-    Skips generic names like "input", "output", "data" (>= 4 chars) when
-    subdirectories are present to avoid false positives.
+def _detect_programs_from_path(path: Path) -> list[str]:
+    """Detect candidate program codes from a directory path.
+
+    Returns a sorted list of program code strings (may be empty).
+    Excludes known non-program folder names.
     """
     if path.is_file():
-        # Check parent dir
         parent_name = path.parent.name.upper()
-        if parent_name and parent_name.isalpha() and len(parent_name) <= 6:
-            return parent_name
-        return None
+        if (parent_name and parent_name.isalpha()
+                and len(parent_name) <= 6
+                and parent_name.lower() not in _NON_PROGRAM_DIRS):
+            return [parent_name]
+        return []
 
-    # Check for subdirectories that look like program codes
+    # Check subdirectories for program-like names
     try:
-        subdirs = [
-            d for d in path.iterdir()
-            if d.is_dir() and d.name.upper().isalpha() and len(d.name) <= 6
-        ]
+        subdirs = sorted(
+            d.name.upper() for d in path.iterdir()
+            if d.is_dir()
+            and d.name.upper().isalpha()
+            and len(d.name) <= 6
+            and d.name.lower() not in _NON_PROGRAM_DIRS
+        )
     except OSError:
         subdirs = []
 
-    if len(subdirs) == 1:
-        return subdirs[0].name.upper()
+    if subdirs:
+        return subdirs
 
-    # If no single subdir match, check the directory name itself
-    if not subdirs:
-        dir_name = path.name.upper()
-        if dir_name and dir_name.isalpha() and len(dir_name) <= 6:
-            return dir_name
+    # Check the directory name itself
+    dir_name = path.name.upper()
+    if (dir_name and dir_name.isalpha()
+            and len(dir_name) <= 6
+            and dir_name.lower() not in _NON_PROGRAM_DIRS):
+        return [dir_name]
 
-    return None
+    return []
 
 
 def cmd_run(args: argparse.Namespace) -> int:
