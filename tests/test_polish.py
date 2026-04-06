@@ -578,7 +578,7 @@ class TestExportCLI:
         assert "MATH 101" in captured.out
 
     def test_export_courses_json(self, populated_db_path, capsys):
-        result = main(["export", "--db", populated_db_path, "courses", "-f", "json"])
+        result = main(["export", "--db", populated_db_path, "courses", "--format", "json"])
         assert result == 0
         captured = capsys.readouterr()
         data = json.loads(captured.out)

@@ -59,19 +59,25 @@ CLI entry point: `abet-syllabus` (installed via `pip install -e .`)
 
 ```
 abet-syllabus run <path> -p <prog> -t <term> -o <dir>  # full pipeline: ingest → generate
+abet-syllabus run <path> -p <prog> -t <term> --map       # ingest → AI map → generate
+abet-syllabus run                                        # interactive mode (browse folders)
 abet-syllabus extract <path>                             # raw text/table extraction
 abet-syllabus parse <path>                               # structured parsing
-abet-syllabus ingest <path> [-p <prog>] [-r]             # extract → parse → store in DB
+abet-syllabus ingest <path> [-p <prog>] [-r] [-f]        # extract → parse → store in DB
 abet-syllabus ingest-plos <csv>                           # load PLO definitions
-abet-syllabus query courses|course|clos|stats|plo-matrix  # inspect the database
-abet-syllabus map <course> -p <prog>                      # AI CLO-PLO mapping
-abet-syllabus generate <course> -t <term> [--no-pdf]      # produce DOCX/PDF output
+abet-syllabus query courses|course|clos|stats            # inspect the database
+abet-syllabus query plo-matrix -p <prog>                 # CLO-PLO mapping detail
+abet-syllabus query coverage -p <prog>                   # course-level PLO coverage matrix
+abet-syllabus query sql "<SQL>"                          # custom read-only SQL query
+abet-syllabus map <course> -p <prog>                     # AI CLO-PLO mapping
+abet-syllabus map <course> -p <prog> --model <model>     # use specific AI model
+abet-syllabus generate <course> -t <term> [--no-pdf]     # produce DOCX/PDF output
 abet-syllabus export courses|clos|plo-matrix --format csv|json
-abet-syllabus status                                      # database overview
-abet-syllabus validate                                    # data quality check
+abet-syllabus status                                     # database overview
+abet-syllabus validate                                   # data quality check
 ```
 
-Global flags: `--db`, `--verbose`/`-v`, `--quiet`/`-q`, `--config`
+Global flags: `--db`, `--verbose`/`-v`, `--quiet`/`-q`, `--config`, `--force`/`-f`
 
 ## Domain Concepts
 

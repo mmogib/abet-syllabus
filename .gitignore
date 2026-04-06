@@ -50,3 +50,9 @@ output/
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Claude Code
+.claude/
+
+# Logs
+*.log
