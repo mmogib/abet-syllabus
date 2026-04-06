@@ -109,48 +109,43 @@ class TestCourseCodeNormalization:
 # ---------------------------------------------------------------------------
 
 class TestSmartDefaults:
-    """Test _detect_programs_from_path."""
+    """Test _list_subdirs and folder browsing."""
 
-    def test_detect_program_from_dir_name(self, tmp_path):
-        """Directory named 'math' should detect as MATH."""
-        from abet_syllabus.cli import _detect_programs_from_path
-        math_dir = tmp_path / "math"
-        math_dir.mkdir()
-        assert _detect_programs_from_path(math_dir) == ["MATH"]
+    def test_list_subdirs(self, tmp_path):
+        """Should list all subdirs recursively."""
+        from abet_syllabus.cli import _list_subdirs
+        (tmp_path / "a").mkdir()
+        (tmp_path / "a" / "b").mkdir()
+        (tmp_path / "c").mkdir()
+        dirs = _list_subdirs(tmp_path)
+        names = [d.name for d in dirs]
+        assert "a" in names
+        assert "b" in names
+        assert "c" in names
 
-    def test_detect_program_from_single_subdir(self, tmp_path):
-        """Directory with a single alpha subdir should detect it."""
-        from abet_syllabus.cli import _detect_programs_from_path
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        (input_dir / "data").mkdir()
-        assert _detect_programs_from_path(input_dir) == ["DATA"]
+    def test_list_subdirs_skips_hidden(self, tmp_path):
+        """Should skip directories starting with dot."""
+        from abet_syllabus.cli import _list_subdirs
+        (tmp_path / ".hidden").mkdir()
+        (tmp_path / "visible").mkdir()
+        dirs = _list_subdirs(tmp_path)
+        names = [d.name for d in dirs]
+        assert "visible" in names
+        assert ".hidden" not in names
 
-    def test_detect_multiple_programs(self, tmp_path):
-        """Multiple subdirs should return all as candidates."""
-        from abet_syllabus.cli import _detect_programs_from_path
-        input_dir = tmp_path / "input"
-        input_dir.mkdir()
-        (input_dir / "math").mkdir()
-        (input_dir / "data").mkdir()
-        assert _detect_programs_from_path(input_dir) == ["DATA", "MATH"]
-
-    def test_detect_program_from_file_parent(self, tmp_path):
-        """File inside a program-named dir should detect the parent."""
-        from abet_syllabus.cli import _detect_programs_from_path
-        as_dir = tmp_path / "as"
-        as_dir.mkdir()
-        file = as_dir / "course.pdf"
-        file.touch()
-        assert _detect_programs_from_path(file) == ["AS"]
-
-    def test_excludes_known_non_program_dirs(self, tmp_path):
-        """Known dirs like 'resources', 'plos', 'templates' should be excluded."""
-        from abet_syllabus.cli import _detect_programs_from_path
-        for name in ["resources", "plos", "templates", "output"]:
-            d = tmp_path / name
-            d.mkdir(exist_ok=True)
-            assert _detect_programs_from_path(d) == [], f"{name} should be excluded"
+    def test_list_subdirs_max_depth(self, tmp_path):
+        """Should respect max_depth."""
+        from abet_syllabus.cli import _list_subdirs
+        d = tmp_path
+        for name in ["a", "b", "c", "d", "e", "f"]:
+            d = d / name
+            d.mkdir()
+        dirs = _list_subdirs(tmp_path, max_depth=2)
+        names = [di.name for di in dirs]
+        assert "a" in names
+        assert "b" in names
+        # c is at depth 3, should not be included
+        assert "c" not in names
 
 
 # ---------------------------------------------------------------------------

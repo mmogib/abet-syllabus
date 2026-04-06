@@ -727,6 +727,56 @@ def _confirm_or_fail(prompt_msg: str, default_yes: bool = True) -> bool:
     return answer in ("y", "yes")
 
 
+def _list_subdirs(root: Path, max_depth: int = 4) -> list[Path]:
+    """Recursively list all subdirectories up to max_depth, relative to root."""
+    dirs: list[Path] = []
+
+    def _walk(current: Path, depth: int) -> None:
+        if depth > max_depth:
+            return
+        try:
+            children = sorted(current.iterdir())
+        except OSError:
+            return
+        for child in children:
+            if child.is_dir() and not child.name.startswith("."):
+                dirs.append(child)
+                _walk(child, depth + 1)
+
+    _walk(root, 1)
+    return dirs
+
+
+def _browse_folder(prompt_msg: str) -> Path:
+    """Interactive folder browser. Lists all subdirs and lets user pick."""
+    cwd = Path.cwd()
+    dirs = _list_subdirs(cwd)
+
+    if not dirs:
+        user_path = input(f"{prompt_msg}: ").strip()
+        if user_path:
+            return Path(user_path)
+        logger.error("No path provided.")
+        sys.exit(1)
+
+    print(f"\n{prompt_msg}:")
+    for i, d in enumerate(dirs, 1):
+        try:
+            rel = d.relative_to(cwd)
+        except ValueError:
+            rel = d
+        print(f"  {i}) {rel}/")
+
+    choice = input(f"\nEnter number [1-{len(dirs)}] or path: ").strip()
+    if choice.isdigit() and 1 <= int(choice) <= len(dirs):
+        return dirs[int(choice) - 1]
+    elif choice:
+        return Path(choice)
+
+    logger.error("No path provided.")
+    sys.exit(1)
+
+
 def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, str | None, str | None]:
     """Resolve smart defaults for the 'run' command.
 
@@ -741,85 +791,34 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
     path_arg = getattr(args, "path", None)
     if path_arg:
         path = Path(path_arg)
+    elif interactive:
+        path = _browse_folder("Select input folder")
+        print(f"Using: {path}")
     else:
-        # Look for ./input/ in cwd
-        default_input = Path.cwd() / "input"
-        if default_input.is_dir():
-            if interactive:
-                if not _confirm_or_fail(f"No input path specified. Use ./input/?"):
-                    logger.error("Cancelled.")
-                    sys.exit(1)
-            print(f"Using input path: {default_input}")
-            path = default_input
-        else:
-            if interactive:
-                user_path = input("Input path not found. Enter path to course files: ").strip()
-                if user_path:
-                    path = Path(user_path)
-                else:
-                    logger.error("No input path specified. Use: abet-syllabus run <path>")
-                    sys.exit(1)
-            else:
-                logger.error("No input path specified and ./input/ not found. Use: abet-syllabus run <path>")
-                sys.exit(1)
+        logger.error("No input path specified. Use: abet-syllabus run <path>")
+        sys.exit(1)
 
     # --- Resolve program ---
     program = args.program
-    if not program:
-        candidates = _detect_programs_from_path(path)
-        if len(candidates) == 1:
-            detected = candidates[0]
-            if interactive:
-                if not _confirm_or_fail(f'Detected program "{detected}". Use {detected}?'):
-                    user_prog = input("Enter program code: ").strip().upper()
-                    program = user_prog if user_prog else None
-                else:
-                    program = detected
-            else:
-                program = detected
-                print(f"Auto-detected program: {program}")
-        elif len(candidates) > 1 and interactive:
-            print("Multiple programs detected:")
-            for i, c in enumerate(candidates, 1):
-                print(f"  {i}) {c}")
-            choice = input(f"Choose program [1-{len(candidates)}] or enter code: ").strip()
-            if choice.isdigit() and 1 <= int(choice) <= len(candidates):
-                program = candidates[int(choice) - 1]
-            elif choice:
-                program = choice.upper()
-        elif interactive:
-            user_prog = input("Program code not detected. Enter program code (or press Enter to skip): ").strip().upper()
-            program = user_prog if user_prog else None
-
-    # --- Narrow path to program subfolder if it exists ---
-    if program and path.is_dir():
-        # Check direct subfolder: path/<program>/
-        prog_dir = path / program.lower()
-        if prog_dir.is_dir():
-            path = prog_dir
-            print(f"Using program folder: {path}")
-        else:
-            # Check inside course-descriptions/
-            for sub_name in ("course-descriptions", "course_descriptions"):
-                prog_dir = path / sub_name / program.lower()
-                if prog_dir.is_dir():
-                    path = prog_dir
-                    print(f"Using program folder: {path}")
-                    break
+    if not program and interactive:
+        program = input("Program code (e.g. MATH, DATA, AS): ").strip().upper()
+        if not program:
+            program = None
+    elif not program:
+        # Non-interactive: program is optional, leave as None
+        pass
 
     # --- Resolve term ---
     term = args.term
     if not term:
         current_term = get_current_term()
         if interactive:
-            if not _confirm_or_fail(f"No term specified. Current term is {current_term}. Use {current_term}?"):
-                user_term = input("Enter term code (e.g. T252): ").strip()
-                if user_term:
-                    # Auto-prepend T if user typed just digits
-                    user_term = user_term.upper()
-                    if user_term.isdigit():
-                        user_term = f"T{user_term}"
-                    term = user_term
+            user_term = input(f"Term [{current_term}]: ").strip()
+            if user_term:
+                user_term = user_term.upper()
+                if user_term.isdigit():
+                    user_term = f"T{user_term}"
+                term = user_term
             else:
                 term = current_term
         else:
@@ -832,65 +831,6 @@ def _resolve_run_defaults(args: argparse.Namespace) -> tuple[Path, str | None, s
         output_dir = str(Path.cwd() / "output")
 
     return path, program, term, output_dir
-
-
-_NON_PROGRAM_DIRS = {
-    "input", "output", "resources", "templates", "plos", "notes",
-    "src", "tests", "docs", "bin", "lib", "build", "dist", "tmp",
-    "course-descriptions", "course_descriptions",
-}
-
-
-def _find_program_candidates(path: Path) -> list[str]:
-    """Find alpha-named subdirs that look like program codes."""
-    try:
-        return sorted(
-            d.name.upper() for d in path.iterdir()
-            if d.is_dir()
-            and d.name.upper().isalpha()
-            and len(d.name) <= 6
-            and d.name.lower() not in _NON_PROGRAM_DIRS
-        )
-    except OSError:
-        return []
-
-
-def _detect_programs_from_path(path: Path) -> list[str]:
-    """Detect candidate program codes from a directory path.
-
-    Returns a sorted list of program code strings (may be empty).
-    Looks inside course-descriptions/ or course_descriptions/ if present.
-    Excludes known non-program folder names.
-    """
-    if path.is_file():
-        parent_name = path.parent.name.upper()
-        if (parent_name and parent_name.isalpha()
-                and len(parent_name) <= 6
-                and parent_name.lower() not in _NON_PROGRAM_DIRS):
-            return [parent_name]
-        return []
-
-    # Check direct subdirectories first
-    candidates = _find_program_candidates(path)
-    if candidates:
-        return candidates
-
-    # Look inside course-descriptions/ or course_descriptions/ subfolder
-    for sub_name in ("course-descriptions", "course_descriptions"):
-        sub = path / sub_name
-        if sub.is_dir():
-            candidates = _find_program_candidates(sub)
-            if candidates:
-                return candidates
-
-    # Check the directory name itself
-    dir_name = path.name.upper()
-    if (dir_name and dir_name.isalpha()
-            and len(dir_name) <= 6
-            and dir_name.lower() not in _NON_PROGRAM_DIRS):
-        return [dir_name]
-
-    return []
 
 
 def cmd_run(args: argparse.Namespace) -> int:
