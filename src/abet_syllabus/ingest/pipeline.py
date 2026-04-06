@@ -128,6 +128,7 @@ def ingest_file(
     file_path: str | Path,
     db_path: str | Path,
     program: str | None = None,
+    force: bool = False,
 ) -> IngestResult:
     """Extract, parse, and store a single file.
 
@@ -175,16 +176,17 @@ def ingest_file(
         # 1. Compute file hash for deduplication
         content_hash = repo.file_hash(path)
 
-        # 2. Check if already processed
-        existing = repo.get_source_file_by_hash(conn, content_hash)
-        if existing is not None:
-            return IngestResult(
-                file_path=str(path),
-                file_name=file_name,
-                course_code=None,
-                status="skipped",
-                message="File already processed (duplicate hash)",
-            )
+        # 2. Check if already processed (skip if force=True)
+        if not force:
+            existing = repo.get_source_file_by_hash(conn, content_hash)
+            if existing is not None:
+                return IngestResult(
+                    file_path=str(path),
+                    file_name=file_name,
+                    course_code=None,
+                    status="skipped",
+                    message="File already processed (duplicate hash)",
+                )
 
         # 3. Extract
         extraction = extract_file(path)

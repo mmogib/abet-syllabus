@@ -113,6 +113,7 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     path = Path(args.path)
     db_path = args.db
+    force = getattr(args, "force", False)
 
     if not path.exists():
         logger.error("Path not found: %s", path)
@@ -120,12 +121,12 @@ def cmd_ingest(args: argparse.Namespace) -> int:
 
     if path.is_file():
         print(f"[1/1] {path.name}... ", end="", flush=True)
-        result = ingest_file(path, db_path, program=args.program)
+        result = ingest_file(path, db_path, program=args.program, force=force)
         print(result.status)
         results = [result]
     elif path.is_dir():
         results = _ingest_folder_with_progress(
-            path, db_path, program=args.program, recursive=args.recursive
+            path, db_path, program=args.program, recursive=args.recursive, force=force
         )
     else:
         logger.error("Not a file or directory: %s", path)
@@ -175,6 +176,7 @@ def _ingest_folder_with_progress(
     db_path: str,
     program: str | None = None,
     recursive: bool = False,
+    force: bool = False,
 ) -> list:
     """Ingest a folder with per-file progress output."""
     from abet_syllabus.extract.detector import is_supported
@@ -194,7 +196,7 @@ def _ingest_folder_with_progress(
     results = []
     for i, file_path in enumerate(files, 1):
         print(f"[{i}/{total}] {file_path.name}... ", end="", flush=True)
-        result = ingest_file(file_path, db_path, program=program)
+        result = ingest_file(file_path, db_path, program=program, force=force)
         print(result.status)
         results.append(result)
 
@@ -844,6 +846,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     gen_pdf = not no_pdf
     instructor = getattr(args, "instructor", None)
     do_map = getattr(args, "map", False)
+    force = getattr(args, "force", False)
 
     if not path.exists():
         logger.error("Path not found: %s", path)
@@ -854,12 +857,12 @@ def cmd_run(args: argparse.Namespace) -> int:
 
     if path.is_file():
         print(f"[1/1] {path.name}... ", end="", flush=True)
-        result = ingest_file(path, db_path, program=program)
+        result = ingest_file(path, db_path, program=program, force=force)
         print(result.status)
         ingest_results = [result]
     elif path.is_dir():
         ingest_results = _ingest_folder_with_progress(
-            path, db_path, program=program, recursive=args.recursive
+            path, db_path, program=program, recursive=args.recursive, force=force
         )
     else:
         logger.error("Not a file or directory: %s", path)
@@ -1208,6 +1211,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run CLO-PLO mapping after ingestion (requires API key)",
     )
     p_run.add_argument(
+        "--force", action="store_true",
+        help="Re-process files even if already ingested",
+    )
+    p_run.add_argument(
         "--db", default=DEFAULT_DB_PATH,
         help=f"Database path (default: {DEFAULT_DB_PATH})",
     )
@@ -1250,6 +1257,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_ingest.add_argument(
         "--recursive", "-r", action="store_true",
         help="Process subdirectories",
+    )
+    p_ingest.add_argument(
+        "--force", action="store_true",
+        help="Re-process files even if already ingested",
     )
     p_ingest.add_argument(
         "--db", default=DEFAULT_DB_PATH,
