@@ -1509,7 +1509,7 @@ def build_parser() -> argparse.ArgumentParser:
     export_sub = p_export.add_subparsers(dest="export_command", help="Export subcommands")
 
     e_courses = export_sub.add_parser("courses", help="Export all courses")
-    e_courses.add_argument("--format", "-f", default="csv", choices=["csv", "json"],
+    e_courses.add_argument("--format", default="csv", choices=["csv", "json"],
                            help="Output format (default: csv)")
     e_courses.add_argument("--output", "-o", default=None, help="Output file path")
     e_courses.add_argument("--program", "-p", default=None, help="Filter by program")
@@ -1517,14 +1517,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     e_clos = export_sub.add_parser("clos", help="Export CLOs for a course")
     e_clos.add_argument("code", help="Course code (e.g., 'MATH 101')")
-    e_clos.add_argument("--format", "-f", default="csv", choices=["csv", "json"],
+    e_clos.add_argument("--format", default="csv", choices=["csv", "json"],
                         help="Output format (default: csv)")
     e_clos.add_argument("--output", "-o", default=None, help="Output file path")
     e_clos.set_defaults(func=cmd_export)
 
     e_matrix = export_sub.add_parser("plo-matrix", help="Export CLO-PLO mapping matrix")
     e_matrix.add_argument("--program", "-p", required=True, help="Program code")
-    e_matrix.add_argument("--format", "-f", default="csv", choices=["csv", "json"],
+    e_matrix.add_argument("--format", default="csv", choices=["csv", "json"],
                           help="Output format (default: csv)")
     e_matrix.add_argument("--output", "-o", default=None, help="Output file path")
     e_matrix.set_defaults(func=cmd_export)
