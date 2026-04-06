@@ -1005,7 +1005,8 @@ def cmd_run(args: argparse.Namespace) -> int:
     # --- Step 1.5: Mapping (optional, when --map is set) ---
     if do_map and program:
         print(f"\n=== Step 1.5: CLO-PLO Mapping ===\n")
-        _run_mapping_step(db_path, course_codes, program)
+        model_name = getattr(args, "model", None)
+        _run_mapping_step(db_path, course_codes, program, model=model_name)
 
     # --- Step 2: Generate ---
     print(f"\n=== Step 2: Generating {len(course_codes)} syllabus document(s) ===\n")
@@ -1048,7 +1049,7 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 1 if gen_errors and not gen_success else 0
 
 
-def _run_mapping_step(db_path: str, course_codes: list[str], program: str) -> None:
+def _run_mapping_step(db_path: str, course_codes: list[str], program: str, model: str | None = None) -> None:
     """Run CLO-PLO mapping for courses when --map is set.
 
     Warns and skips if no API key is available or PLOs are missing.
@@ -1083,7 +1084,7 @@ def _run_mapping_step(db_path: str, course_codes: list[str], program: str) -> No
 
     # Get provider
     try:
-        provider = get_default_provider()
+        provider = get_default_provider(model=model)
     except ValueError:
         print("Warning: No API key found (OPENROUTER_API_KEY or ANTHROPIC_API_KEY).")
         print("Skipping mapping step. Set an API key to enable CLO-PLO mapping.")
@@ -1322,6 +1323,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument(
         "--map", action="store_true",
         help="Run CLO-PLO mapping after ingestion (requires API key)",
+    )
+    p_run.add_argument(
+        "--model", default=None,
+        help="AI model for mapping (e.g., 'google/gemini-2.5-flash')",
     )
     p_run.add_argument(
         "--force", "-f", action="store_true",
