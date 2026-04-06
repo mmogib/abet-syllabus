@@ -5,7 +5,7 @@ from __future__ import annotations
 import sqlite3
 from pathlib import Path
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA_SQL = """
 PRAGMA foreign_keys = ON;
@@ -140,6 +140,15 @@ CREATE TABLE IF NOT EXISTS course_instructors (
     term_code       TEXT    NOT NULL DEFAULT '',
     role            TEXT    NOT NULL DEFAULT 'coordinator',
     UNIQUE(course_id, instructor_name, term_code)
+);
+
+-- PLO aliases (alternative codes that map to canonical PLO definitions)
+CREATE TABLE IF NOT EXISTS plo_aliases (
+    id           INTEGER PRIMARY KEY,
+    program_code TEXT NOT NULL REFERENCES programs(program_code) ON DELETE CASCADE,
+    alias        TEXT NOT NULL,
+    plo_id       INTEGER NOT NULL REFERENCES plo_definitions(id) ON DELETE CASCADE,
+    UNIQUE(program_code, alias)
 );
 
 -- Source file tracking

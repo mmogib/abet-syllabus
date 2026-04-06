@@ -5,6 +5,7 @@ from abet_syllabus.ingest.pipeline import (
     ingest_file,
     ingest_folder,
     ingest_plos,
+    prompt_plo_aliases,
 )
 
 __all__ = [
@@ -12,4 +13,5 @@ __all__ = [
     "ingest_file",
     "ingest_folder",
     "ingest_plos",
+    "prompt_plo_aliases",
 ]

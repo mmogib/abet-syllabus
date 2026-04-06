@@ -19,7 +19,9 @@ Usage::
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
+import sys
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from abet_syllabus.db import repository as repo
@@ -38,6 +40,8 @@ from abet_syllabus.extract.detector import is_supported
 from abet_syllabus.parse import parse_extraction
 from abet_syllabus.parse.models import ParsedCourse as ParsedCourseData
 
+logger = logging.getLogger(__name__)
+
 
 @dataclass
 class IngestResult:
@@ -48,6 +52,7 @@ class IngestResult:
     course_code: str | None
     status: str  # "success" / "skipped" / "error"
     message: str  # details
+    unmatched_plo_codes: set[str] = field(default_factory=set)
 
 
 def _map_parsed_to_db(parsed: ParsedCourseData) -> Course:
@@ -212,7 +217,11 @@ def ingest_file(
 
         # 6. Store in DB
         course_id = repo.upsert_course(conn, course)
-        clo_ids = repo.replace_course_clos(conn, course_id, clos)
+        # When force-ingesting, preserve existing CLO-PLO mappings
+        if force:
+            clo_ids = repo.replace_course_clos_preserving_mappings(conn, course_id, clos)
+        else:
+            clo_ids = repo.replace_course_clos(conn, course_id, clos)
         repo.replace_course_topics(conn, course_id, topics)
         repo.replace_course_textbooks(conn, course_id, textbooks)
         repo.replace_course_assessment(conn, course_id, assessments)
@@ -236,17 +245,17 @@ def ingest_file(
             repo.link_course_program(conn, course_id, program)
 
         # Store CLO-PLO mappings if present
+        unmatched_plo_codes: set[str] = set()
         if parsed.clos and clo_ids:
             for clo_data, clo_db_id in zip(parsed.clos, clo_ids):
                 if clo_data.aligned_plos:
                     for plo_code in clo_data.aligned_plos:
-                        # Try to find matching PLO in the database
-                        # PLO codes from extraction are short codes like "K1", "S2"
-                        # We need to search across all programs (or the specified program)
-                        _store_extracted_plo_mapping(
+                        stored = _store_extracted_plo_mapping(
                             conn, clo_db_id, plo_code,
                             program=program,
                         )
+                        if not stored and program:
+                            unmatched_plo_codes.add(plo_code)
 
         # 7. Record source file
         repo.upsert_source_file(
@@ -270,6 +279,7 @@ def ingest_file(
                 f"Stored: {len(clos)} CLOs, {len(topics)} topics, "
                 f"{len(textbooks)} textbooks, {len(assessments)} assessments"
             ),
+            unmatched_plo_codes=unmatched_plo_codes,
         )
 
     except Exception as exc:
@@ -287,13 +297,14 @@ def ingest_file(
 def _store_extracted_plo_mapping(
     conn, clo_db_id: int, plo_short_code: str,
     program: str | None = None,
-) -> None:
+) -> bool:
     """Attempt to store a CLO-PLO mapping from extracted data.
 
     PLO codes from extraction are short codes like "K1", "S2".
-    We search for matching PLO definitions in the database.
-    If no match is found, the mapping is silently skipped (PLOs may
-    not have been loaded yet).
+    We search for matching PLO definitions in the database,
+    falling back to PLO aliases if no direct match is found.
+
+    Returns True if a mapping was stored, False otherwise.
     """
     from abet_syllabus.db.models import CloPloMapping
 
@@ -309,15 +320,103 @@ def _store_extracted_plo_mapping(
             (plo_short_code,),
         ).fetchall()
 
-    for row in rows:
-        repo.upsert_clo_plo_mapping(conn, CloPloMapping(
-            course_clo_id=clo_db_id,
-            plo_id=row["id"],
-            program_code=row["program_code"],
-            mapping_source="extracted",
-            confidence=1.0,
-            rationale="Extracted from source document",
-        ))
+    if rows:
+        for row in rows:
+            repo.upsert_clo_plo_mapping(conn, CloPloMapping(
+                course_clo_id=clo_db_id,
+                plo_id=row["id"],
+                program_code=row["program_code"],
+                mapping_source="extracted",
+                confidence=1.0,
+                rationale="Extracted from source document",
+            ))
+        return True
+
+    # Fallback: check PLO aliases
+    if program:
+        alias_row = conn.execute(
+            "SELECT plo_id FROM plo_aliases WHERE alias = ? AND program_code = ?",
+            (plo_short_code, program),
+        ).fetchone()
+        if alias_row:
+            repo.upsert_clo_plo_mapping(conn, CloPloMapping(
+                course_clo_id=clo_db_id,
+                plo_id=alias_row["plo_id"],
+                program_code=program,
+                mapping_source="extracted",
+                confidence=1.0,
+                rationale="Extracted from source document (via alias)",
+            ))
+            return True
+
+    return False
+
+
+def prompt_plo_aliases(
+    conn,
+    unmatched_codes: set[str],
+    program_code: str,
+) -> int:
+    """Interactively prompt the user to map unmatched PLO codes to existing PLO definitions.
+
+    Only prompts if stdin is a tty. Returns the number of aliases created.
+    """
+    if not unmatched_codes or not sys.stdin.isatty():
+        return 0
+
+    plos = repo.get_plos_for_program(conn, program_code)
+    if not plos:
+        return 0
+
+    plo_labels = [p.plo_label for p in plos]
+    plo_display = ", ".join(plo_labels)
+    sorted_codes = sorted(unmatched_codes)
+
+    print(f"\nFound unmapped PLO codes: {', '.join(sorted_codes)}")
+    print(f"These don't match PLO definitions for {program_code} ({plo_display}).")
+    print()
+
+    try:
+        answer = input("Map them now? [Y/n]: ").strip().lower()
+    except (EOFError, KeyboardInterrupt):
+        return 0
+
+    if answer and answer not in ("y", "yes"):
+        return 0
+
+    # Build numbered choices
+    choices = {str(i + 1): plo for i, plo in enumerate(plos)}
+    choices_display = ", ".join(f"{k}={p.plo_label}" for k, p in choices.items())
+
+    alias_count = 0
+    for code in sorted_codes:
+        try:
+            pick = input(f"  {code} -> ? [{choices_display}, s=skip]: ").strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            break
+
+        if pick == "s" or not pick:
+            continue
+
+        if pick in choices:
+            plo = choices[pick]
+            repo.upsert_plo_alias(conn, program_code, code, plo.id)
+            alias_count += 1
+            print(f"    {code} -> {plo.plo_label} (saved)")
+        else:
+            # Try matching by label directly
+            matched = [p for p in plos if p.plo_label.lower() == pick]
+            if matched:
+                repo.upsert_plo_alias(conn, program_code, code, matched[0].id)
+                alias_count += 1
+                print(f"    {code} -> {matched[0].plo_label} (saved)")
+            else:
+                print(f"    Skipped (invalid choice)")
+
+    if alias_count:
+        print(f"\nSaved {alias_count} alias(es). Re-ingest to apply mappings.")
+
+    return alias_count
 
 
 def ingest_folder(

@@ -146,6 +146,14 @@ def _resolve_plo_id(conn, plo_code: str, program_code: str) -> int | None:
         if row:
             return row["id"]
 
+        # Try aliases
+        row = conn.execute(
+            "SELECT plo_id FROM plo_aliases WHERE alias = ? AND program_code = ?",
+            (candidate, program_code),
+        ).fetchone()
+        if row:
+            return row["plo_id"]
+
     return None
 
 

@@ -37,16 +37,18 @@ class TestSchema:
         assert "course_topics" in tables
 
     def test_schema_version(self, db):
-        assert get_schema_version(db) == 1
+        from abet_syllabus.db.schema import SCHEMA_VERSION
+        assert get_schema_version(db) == SCHEMA_VERSION
 
     def test_foreign_keys_enabled(self, db):
         row = db.execute("PRAGMA foreign_keys").fetchone()
         assert row[0] == 1
 
     def test_idempotent_init(self):
+        from abet_syllabus.db.schema import SCHEMA_VERSION
         conn = init_db(":memory:")
         init_db_conn2 = init_db(":memory:")
-        assert get_schema_version(conn) == 1
+        assert get_schema_version(conn) == SCHEMA_VERSION
         conn.close()
         init_db_conn2.close()
 

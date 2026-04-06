@@ -110,6 +110,8 @@ def cmd_parse(args: argparse.Namespace) -> int:
 def cmd_ingest(args: argparse.Namespace) -> int:
     """Process course specification files into the database."""
     from abet_syllabus.ingest import ingest_file, ingest_folder
+    from abet_syllabus.ingest.pipeline import prompt_plo_aliases
+    from abet_syllabus.db.schema import init_db as _init_db
 
     path = Path(args.path)
     db_path = args.db
@@ -167,6 +169,18 @@ def cmd_ingest(args: argparse.Namespace) -> int:
         for r in errors:
             print(f"  {r.file_name}: {r.message}")
         print()
+
+    # Collect unmatched PLO codes across all results and prompt for aliases
+    if args.program:
+        all_unmatched: set[str] = set()
+        for r in results:
+            all_unmatched.update(r.unmatched_plo_codes)
+        if all_unmatched:
+            conn = _init_db(db_path)
+            try:
+                prompt_plo_aliases(conn, all_unmatched, args.program)
+            finally:
+                conn.close()
 
     return 1 if errors and not success else 0
 
@@ -1262,6 +1276,94 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 1 if report.errors else 0
 
 
+def cmd_plo_alias(args: argparse.Namespace) -> int:
+    """Manage PLO aliases (create, list, delete)."""
+    from abet_syllabus.db import repository as repo
+    from abet_syllabus.db.models import Program
+    from abet_syllabus.db.schema import init_db
+
+    db_path = args.db
+    program = args.program
+
+    conn = init_db(db_path)
+    try:
+        # Ensure program exists
+        programs = repo.get_programs(conn)
+        program_codes = [p.program_code for p in programs]
+        if program not in program_codes:
+            # Create program if it doesn't exist
+            repo.upsert_program(conn, Program(program_code=program))
+
+        # --- List mode ---
+        if getattr(args, "list_aliases", False):
+            aliases = repo.get_plo_aliases(conn, program)
+            if not aliases:
+                print(f"No PLO aliases defined for program {program}.")
+                return 0
+
+            print(f"PLO aliases for {program}:")
+            print(f"  {'Alias':<10} {'Maps to':<15} {'PLO Label'}")
+            print(f"  {'-'*10} {'-'*15} {'-'*15}")
+            for a in aliases:
+                # Look up the PLO label
+                plo = conn.execute(
+                    "SELECT plo_code, plo_label FROM plo_definitions WHERE id = ?",
+                    (a.plo_id,),
+                ).fetchone()
+                plo_code = plo["plo_code"] if plo else "?"
+                plo_label = plo["plo_label"] if plo else "?"
+                print(f"  {a.alias:<10} {plo_code:<15} {plo_label}")
+            return 0
+
+        # --- Delete mode ---
+        if getattr(args, "delete", False):
+            alias_name = args.alias
+            if not alias_name:
+                logger.error("Alias name required for --delete")
+                return 1
+            deleted = repo.delete_plo_alias(conn, program, alias_name)
+            if deleted:
+                print(f"Deleted alias '{alias_name}' for program {program}.")
+            else:
+                print(f"Alias '{alias_name}' not found for program {program}.")
+            return 0
+
+        # --- Create mode ---
+        alias_name = args.alias
+        target_label = args.target
+        if not alias_name or not target_label:
+            logger.error("Both alias and target PLO label are required.")
+            logger.error("Usage: abet-syllabus plo-alias K1 SO1 -p MATH")
+            return 1
+
+        # Resolve target PLO
+        plos = repo.get_plos_for_program(conn, program)
+        if not plos:
+            logger.error("No PLO definitions found for program %s.", program)
+            return 1
+
+        target_plo = None
+        for p in plos:
+            if p.plo_label == target_label or p.plo_code == target_label:
+                target_plo = p
+                break
+
+        if target_plo is None:
+            plo_labels = ", ".join(p.plo_label for p in plos)
+            logger.error(
+                "PLO '%s' not found for program %s. Available: %s",
+                target_label, program, plo_labels,
+            )
+            return 1
+
+        repo.upsert_plo_alias(conn, program, alias_name, target_plo.id)
+        print(f"Alias created: {alias_name} -> {target_plo.plo_label} ({target_plo.plo_code}) for {program}")
+        return 0
+
+    finally:
+        conn.close()
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argument parser with all subcommands."""
     parser = argparse.ArgumentParser(
@@ -1553,6 +1655,37 @@ def build_parser() -> argparse.ArgumentParser:
         help="Program code to scope validation",
     )
     p_validate.set_defaults(func=cmd_validate)
+
+    # --- plo-alias ---
+    p_alias = subparsers.add_parser(
+        "plo-alias",
+        help="Manage PLO aliases (alternative codes that map to PLO definitions)",
+    )
+    p_alias.add_argument(
+        "alias", nargs="?", default=None,
+        help="Alias code (e.g., K1)",
+    )
+    p_alias.add_argument(
+        "target", nargs="?", default=None,
+        help="Target PLO label or code (e.g., SO1)",
+    )
+    p_alias.add_argument(
+        "--program", "-p", required=True,
+        help="Program code (e.g., MATH)",
+    )
+    p_alias.add_argument(
+        "--list", dest="list_aliases", action="store_true",
+        help="List all aliases for the program",
+    )
+    p_alias.add_argument(
+        "--delete", action="store_true",
+        help="Delete the specified alias",
+    )
+    p_alias.add_argument(
+        "--db", default=DEFAULT_DB_PATH,
+        help=f"Database path (default: {DEFAULT_DB_PATH})",
+    )
+    p_alias.set_defaults(func=cmd_plo_alias)
 
     return parser
 

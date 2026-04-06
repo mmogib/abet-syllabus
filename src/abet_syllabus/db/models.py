@@ -22,6 +22,14 @@ class PloDefinition:
 
 
 @dataclass
+class PloAlias:
+    id: int | None = None
+    program_code: str = ""
+    alias: str = ""
+    plo_id: int = 0
+
+
+@dataclass
 class Course:
     id: int | None = None
     course_code: str = ""

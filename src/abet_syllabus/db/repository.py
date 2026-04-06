@@ -16,6 +16,7 @@ from .models import (
     CourseTextbook,
     CourseTopic,
     CreditCategorization,
+    PloAlias,
     PloDefinition,
     Program,
 )
@@ -105,6 +106,55 @@ def load_plos_from_csv(conn: sqlite3.Connection, csv_path: str | Path) -> int:
             ))
             count += 1
     return count
+
+
+# ---------------------------------------------------------------------------
+# PLO Aliases
+# ---------------------------------------------------------------------------
+
+def upsert_plo_alias(conn: sqlite3.Connection, program_code: str, alias: str, plo_id: int) -> None:
+    """Create or update a PLO alias for a program."""
+    conn.execute(
+        """INSERT INTO plo_aliases (program_code, alias, plo_id)
+           VALUES (?, ?, ?)
+           ON CONFLICT(program_code, alias) DO UPDATE SET plo_id = excluded.plo_id""",
+        (program_code, alias, plo_id),
+    )
+    conn.commit()
+
+
+def get_plo_aliases(conn: sqlite3.Connection, program_code: str) -> list[PloAlias]:
+    """Get all PLO aliases for a program."""
+    rows = conn.execute(
+        "SELECT * FROM plo_aliases WHERE program_code = ? ORDER BY alias",
+        (program_code,),
+    ).fetchall()
+    return [
+        PloAlias(
+            id=r["id"], program_code=r["program_code"],
+            alias=r["alias"], plo_id=r["plo_id"],
+        )
+        for r in rows
+    ]
+
+
+def resolve_plo_by_alias(conn: sqlite3.Connection, alias: str, program_code: str) -> int | None:
+    """Look up plo_id by alias for a program. Returns None if not found."""
+    row = conn.execute(
+        "SELECT plo_id FROM plo_aliases WHERE alias = ? AND program_code = ?",
+        (alias, program_code),
+    ).fetchone()
+    return row["plo_id"] if row else None
+
+
+def delete_plo_alias(conn: sqlite3.Connection, program_code: str, alias: str) -> bool:
+    """Delete a PLO alias. Returns True if a row was deleted."""
+    cur = conn.execute(
+        "DELETE FROM plo_aliases WHERE program_code = ? AND alias = ?",
+        (program_code, alias),
+    )
+    conn.commit()
+    return cur.rowcount > 0
 
 
 # ---------------------------------------------------------------------------
@@ -238,6 +288,71 @@ def get_course_clos(conn: sqlite3.Connection, course_id: int) -> list[CourseClo]
         )
         for r in rows
     ]
+
+
+def replace_course_clos_preserving_mappings(conn: sqlite3.Connection, course_id: int, clos: list[CourseClo]) -> list[int]:
+    """Replace CLOs for a course while preserving existing CLO-PLO mappings.
+
+    This is used during force-ingest to avoid losing AI-suggested or
+    manually approved mappings when CLOs are re-parsed.
+
+    Steps:
+        1. Save all existing mappings keyed by clo_code
+        2. Delete old CLOs (cascade deletes mappings)
+        3. Insert new CLOs (get new IDs)
+        4. Re-insert saved mappings using new clo_ids, matched by clo_code
+    """
+    # 1. Save existing mappings keyed by clo_code
+    old_clos = conn.execute(
+        "SELECT id, clo_code FROM course_clos WHERE course_id = ?",
+        (course_id,),
+    ).fetchall()
+
+    saved_mappings: dict[str, list[dict]] = {}
+    for old_clo in old_clos:
+        old_clo_id = old_clo["id"]
+        old_clo_code = old_clo["clo_code"]
+        mappings = conn.execute(
+            """SELECT plo_id, program_code, mapping_source, confidence,
+                      rationale, approved, approved_at
+               FROM clo_plo_mappings WHERE course_clo_id = ?""",
+            (old_clo_id,),
+        ).fetchall()
+        if mappings:
+            saved_mappings[old_clo_code] = [dict(m) for m in mappings]
+
+    # 2. Delete old CLOs (cascade deletes mappings)
+    conn.execute("DELETE FROM course_clos WHERE course_id = ?", (course_id,))
+
+    # 3. Insert new CLOs
+    new_ids = []
+    for clo in clos:
+        cur = conn.execute(
+            """INSERT INTO course_clos (course_id, clo_code, clo_category, clo_text,
+                 teaching_strategy, assessment_method, sequence)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (course_id, clo.clo_code, clo.clo_category, clo.clo_text,
+             clo.teaching_strategy, clo.assessment_method, clo.sequence),
+        )
+        new_ids.append(cur.lastrowid)
+
+    # 4. Re-insert saved mappings using new clo_ids, matched by clo_code
+    for new_clo_id, clo in zip(new_ids, clos):
+        if clo.clo_code in saved_mappings:
+            for mapping in saved_mappings[clo.clo_code]:
+                conn.execute(
+                    """INSERT OR IGNORE INTO clo_plo_mappings
+                       (course_clo_id, plo_id, program_code, mapping_source,
+                        confidence, rationale, approved, approved_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (new_clo_id, mapping["plo_id"], mapping["program_code"],
+                     mapping["mapping_source"], mapping["confidence"],
+                     mapping["rationale"], mapping["approved"],
+                     mapping["approved_at"]),
+                )
+
+    conn.commit()
+    return new_ids
 
 
 # ---------------------------------------------------------------------------
@@ -534,8 +649,8 @@ def get_stats(conn: sqlite3.Connection) -> dict:
                    "clo_plo_mappings", "source_files", "course_topics"]:
         row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()  # noqa: S608
         stats[table] = row["c"]
-    # Also include textbooks and assessments
-    for table in ["course_textbooks", "course_assessment"]:
+    # Also include textbooks, assessments, and aliases
+    for table in ["course_textbooks", "course_assessment", "plo_aliases"]:
         row = conn.execute(f"SELECT COUNT(*) as c FROM {table}").fetchone()  # noqa: S608
         stats[table] = row["c"]
     return stats
